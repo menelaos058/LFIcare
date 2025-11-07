@@ -1,0 +1,23 @@
+// DatabaseService.js
+import { onValue, push, ref } from "firebase/database";
+import { database } from "../firebaseConfig";
+
+// Προσθήκη νέου chat message σε ένα room
+export const sendMessage = async (roomId, messageData) => {
+  try {
+    const messagesRef = ref(database, `chatRooms/${roomId}/messages`);
+    await push(messagesRef, messageData);
+    return { success: true };
+  } catch (error) {
+    return { error: error.message };
+  }
+};
+
+// Παρακολούθηση νέων μηνυμάτων σε ένα room
+export const subscribeToMessages = (roomId, callback) => {
+  const messagesRef = ref(database, `chatRooms/${roomId}/messages`);
+  onValue(messagesRef, (snapshot) => {
+    const messages = snapshot.val() ? Object.entries(snapshot.val()).map(([id, msg]) => ({ id, ...msg })) : [];
+    callback(messages);
+  });
+};

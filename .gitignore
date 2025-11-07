@@ -1,0 +1,32 @@
+﻿# Node / logs
+node_modules/
+npm-debug.log*
+yarn-error.log*
+*.log
+
+# Expo / Metro
+.expo/
+.expo-shared/
+
+# Android
+android/.gradle/
+android/.idea/
+android/local.properties
+android/*.iml
+android/build/
+android/app/build/
+android/.build/
+android/app/release/
+*.keystore
+*.jks
+
+# iOS
+ios/Pods/
+ios/build/
+*.xcworkspace
+*.xcuserstate
+*.xcodeproj/project.xcworkspace/
+DerivedData/
+
+# Env
+.env
