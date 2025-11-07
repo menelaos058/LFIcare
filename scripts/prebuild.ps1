@@ -6,7 +6,10 @@ param(
 
 Write-Host "==> Prebuild helper started (Platform=$Platform, CleanOnly=$CleanOnly)" -ForegroundColor Cyan
 
-# 1) Σβήσε generated/native φακέλους
+# Κάνε non-interactive όλα τα expo βήματα
+$env:CI = "1"
+
+# 1) Καθάρισμα generated φακέλων
 $paths = @("android", "ios", ".gradle")
 foreach ($p in $paths) {
   if (Test-Path $p) {
@@ -20,7 +23,7 @@ if ($CleanOnly) {
   exit 0
 }
 
-# 2) Εγκατάσταση node modules (ci -> fallback σε install)
+# 2) Εγκατάσταση modules (ci -> fallback σε install)
 if (Test-Path "package-lock.json") {
   Write-Host " - npm ci"
   npm ci
@@ -35,46 +38,50 @@ if (Test-Path "package-lock.json") {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-# 3) Προαιρετικό αντίγραφο overrides (αν υπάρχουν)
-$overrideRoot = "templates"
-$androidOverrides = Join-Path $overrideRoot "android-overrides"
-$iosOverrides = Join-Path $overrideRoot "ios-overrides"
-
-function Copy-Overrides($from, $to) {
-  if (Test-Path $from) {
-    Write-Host " - Copy overrides from $from to $to"
-    Copy-Item -Recurse -Force "$from\*" $to -ErrorAction SilentlyContinue
+function Ensure-Avd() {
+  # Αν υπάρχει adb & device, προχωράμε. Αλλιώς άνοιξε μόνος σου τον emulator πριν τρέξεις το script.
+  $adb = "adb"
+  $devices = & $adb devices
+  if (-not ($devices -match "device`$")) {
+    Write-Host "(!) Δεν βρέθηκε ενεργή συσκευή/emulator μέσω 'adb devices'." -ForegroundColor Yellow
+    Write-Host "    Άνοιξε έναν emulator (ή σύνδεσε συσκευή) και ξανατρέξε το script." -ForegroundColor Yellow
   }
 }
 
-# 4) Prebuild & Run
 if ($Platform -eq "android" -or $Platform -eq "both") {
-  Write-Host "==> expo prebuild -p android --clean"
-  npx expo prebuild -p android --clean --non-interactive
+  Ensure-Avd
 
+  Write-Host "==> expo prebuild -p android --clean"
+  npx expo prebuild -p android --clean
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  if (Test-Path "android") {
-    Copy-Overrides $androidOverrides "android"
-  }
+  # 3) Build + Install με Gradle (αποφεύγουμε το 'expo run:android' για να μην ανοίγει emulator)
+  Push-Location android
+  Write-Host "==> ./gradlew app:assembleDebug"
+  ./gradlew app:assembleDebug
+  if ($LASTEXITCODE -ne 0) { Pop-Location; exit $LASTEXITCODE }
 
-  # TIP: μην ανοίγεις emulator αυτόματα – άνοιξέ τον πρώτα μόνος σου
-  Write-Host "==> npx expo run:android --no-open"
-  npx expo run:android --no-open --variant debug --non-interactive
-  exit $LASTEXITCODE
+  Write-Host "==> ./gradlew app:installDebug"
+  ./gradlew app:installDebug
+  $installExit = $LASTEXITCODE
+  Pop-Location
+  if ($installExit -ne 0) { exit $installExit }
+
+  # 4) Εκκίνηση activity
+  Write-Host "==> adb shell am start -n com.lamprian.lficare/.MainActivity"
+  adb shell am start -n com.lamprian.lficare/.MainActivity
+
+  Write-Host "==> Done." -ForegroundColor Green
+  exit 0
 }
 
 if ($Platform -eq "ios" -or $Platform -eq "both") {
   Write-Host "==> expo prebuild -p ios --clean"
-  npx expo prebuild -p ios --clean --non-interactive
+  npx expo prebuild -p ios --clean
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  if (Test-Path "ios") {
-    Copy-Overrides $iosOverrides "ios"
-  }
-
-  Write-Host "==> npx expo run:ios --no-open"
-  npx expo run:ios --no-open --non-interactive
+  Write-Host "==> npx expo run:ios --non-interactive"
+  npx expo run:ios
   exit $LASTEXITCODE
 }
 
