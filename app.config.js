@@ -79,7 +79,7 @@ export default ({ config }) => ({
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           minSdkVersion: 24,
-          kotlinVersion: "1.9.24",
+          kotlinVersion: "1.9.25",
           javaVersion: "17"
         }
       }
