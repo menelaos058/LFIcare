@@ -14,7 +14,7 @@ export default ({ config }) => ({
   orientation: "portrait",
 
   // --- Branding / assets ---
-  icon: "./assets/icon.png",
+  icon: "./assets/images/icon.png",
   splash: {
     image: "./assets/images/splash.png",
     resizeMode: "contain",
@@ -41,7 +41,9 @@ export default ({ config }) => ({
       foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
-    permissions: ["INTERNET", "CAMERA"]
+    // κράτα τα permissions λιτά — πρόσθεσε μόνο ό,τι χρειάζεται πραγματικά
+    permissions: ["INTERNET", "CAMERA"],
+    jsEngine: "hermes" // default στο SDK 52, το ορίζουμε ρητά
   },
 
   // --- OTA Updates (EAS Update) ---
@@ -53,6 +55,7 @@ export default ({ config }) => ({
   },
 
   // --- Public runtime config (διαθέσιμο στο client) ---
+  // Tip: για public vars προτίμησε EXPO_PUBLIC_* — κρατάμε και fallback στα παλιά FB_*
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? process.env.API_URL,
     firebase: {
@@ -72,6 +75,7 @@ export default ({ config }) => ({
       "expo-build-properties",
       {
         android: {
+          // σταθερό toolchain για SDK 52 (AGP 8)
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           minSdkVersion: 24,
@@ -80,8 +84,11 @@ export default ({ config }) => ({
         }
       }
     ]
-    // Αν προσθέσεις notifications/localization στο μέλλον, βάλε:
+    // αν προσθέσεις notifications/localization στο μέλλον, βάλε:
     // "expo-notifications",
     // "expo-localization",
-  ]
+  ],
+
+  // --- Προαιρετικά βοηθητικά ---
+  assetBundlePatterns: ["**/*"]
 });
