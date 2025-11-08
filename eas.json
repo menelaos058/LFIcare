@@ -12,7 +12,7 @@
     },
     "production": {
       "channel": "production",
-      "autoIncrement": "version"
+      "autoIncrement": true
     }
   },
   "submit": {
