@@ -41,22 +41,18 @@ export default ({ config }) => ({
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
-    // Κράτα τα permissions λιτά· πρόσθεσε μόνο ό,τι πραγματικά χρειάζεται
     permissions: ["INTERNET", "CAMERA"]
   },
 
   // --- OTA Updates (EAS Update) ---
-  // Μην βάζεις εδώ 'url' χειροκίνητα (αποφεύγουμε το "Invalid UUID appId").
-  // Το EAS CLI θα προσθέσει μόνο του το updates.url όταν γίνει project:init / build:configure.
   updates: {
     enabled: true,
     checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0
-    // url: "https://u.expo.dev/<AUTO-INSERTED-BY-EAS>"
+    fallbackToCacheTimeout: 0,
+    url: "https://u.expo.dev/b8f57f4d-6894-4dcd-a21b-ddaf2fa2f638"
   },
 
   // --- Public runtime config (διαθέσιμο στο client) ---
-  // Tip: Για public variables προτιμάται prefix EXPO_PUBLIC_*. Βάζω fallback στα παλιά FB_* αν τα έχεις ήδη.
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? process.env.API_URL,
     firebase: {
@@ -66,8 +62,8 @@ export default ({ config }) => ({
       projectId: process.env.EXPO_PUBLIC_FB_PROJECT_ID ?? process.env.FB_PROJECT_ID,
       storageBucket: process.env.EXPO_PUBLIC_FB_STORAGE_BUCKET ?? process.env.FB_STORAGE_BUCKET,
       messagingSenderId: process.env.EXPO_PUBLIC_FB_MESSAGING_SENDER_ID ?? process.env.FB_MESSAGING_SENDER_ID
-    }
-    // eas: { projectId: "<AUTO-INSERTED-BY-EAS>" }
+    },
+    eas: { projectId: "b8f57f4d-6894-4dcd-a21b-ddaf2fa2f638" }
   },
 
   // --- Plugins ---
@@ -76,7 +72,6 @@ export default ({ config }) => ({
       "expo-build-properties",
       {
         android: {
-          // Κρίσιμα για σταθερά builds με AGP 8 (SDK 52)
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           minSdkVersion: 24,
@@ -85,7 +80,7 @@ export default ({ config }) => ({
         }
       }
     ]
-    // Αν χρησιμοποιήσεις στο μέλλον notifications/localization, πρόσθεσέ τα εδώ:
+    // Αν προσθέσεις notifications/localization στο μέλλον, βάλε:
     // "expo-notifications",
     // "expo-localization",
   ]
