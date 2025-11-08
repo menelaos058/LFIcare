@@ -41,9 +41,8 @@ export default ({ config }) => ({
       foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
-    // κράτα τα permissions λιτά — πρόσθεσε μόνο ό,τι χρειάζεται πραγματικά
     permissions: ["INTERNET", "CAMERA"],
-    jsEngine: "hermes" // default στο SDK 52, το ορίζουμε ρητά
+    jsEngine: "hermes"
   },
 
   // --- OTA Updates (EAS Update) ---
@@ -55,7 +54,6 @@ export default ({ config }) => ({
   },
 
   // --- Public runtime config (διαθέσιμο στο client) ---
-  // Tip: για public vars προτίμησε EXPO_PUBLIC_* — κρατάμε και fallback στα παλιά FB_*
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? process.env.API_URL,
     firebase: {
@@ -66,7 +64,7 @@ export default ({ config }) => ({
       storageBucket: process.env.EXPO_PUBLIC_FB_STORAGE_BUCKET ?? process.env.FB_STORAGE_BUCKET,
       messagingSenderId: process.env.EXPO_PUBLIC_FB_MESSAGING_SENDER_ID ?? process.env.FB_MESSAGING_SENDER_ID
     },
-    eas: { projectId: "b8f57f4d-6894-4dcd-a21b-ddaf2fa2f638" }
+    eas: { projectId: process.env.EAS_PROJECT_ID }
   },
 
   // --- Plugins ---
@@ -75,7 +73,6 @@ export default ({ config }) => ({
       "expo-build-properties",
       {
         android: {
-          // σταθερό toolchain για SDK 52 (AGP 8)
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           minSdkVersion: 24,
@@ -84,12 +81,9 @@ export default ({ config }) => ({
           composeCompilerVersion: "1.5.15"
         }
       }
-    ]
-    // αν προσθέσεις notifications/localization στο μέλλον, βάλε:
-    // "expo-notifications",
-    // "expo-localization",
+    ],
+    "expo-updates"
   ],
 
-  // --- Προαιρετικά βοηθητικά ---
   assetBundlePatterns: ["**/*"]
 });
