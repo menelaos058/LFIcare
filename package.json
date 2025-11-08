@@ -52,7 +52,7 @@
   },
   "devDependencies": {
     "@types/react": "18.3.26",
-    "expo-build-properties": "^0.13.3",
+    "expo-build-properties": "^1.0.9",
     "patch-package": "^8.0.0",
     "postinstall-postinstall": "^2.1.0",
     "typescript": "~5.9.2"
