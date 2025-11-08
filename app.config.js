@@ -1,74 +1,73 @@
 // app.config.js
-require('dotenv').config();
+import 'dotenv/config';
 
-module.exports = ({ config }) => ({
+export default ({ config }) => ({
   ...config,
   name: "LFIcare",
-  slug: "LFIcare",
+  slug: "lficare",
   scheme: "lficare",
   version: "1.0.0",
+
+  runtimeVersion: { policy: "sdkVersion" },
+
   orientation: "portrait",
-  sdkVersion: "52.0.0",
-  platforms: ["android", "ios", "web"],
-  newArchEnabled: true, 
+  icon: "./assets/icon.png",
+  splash: { image: "./assets/splash.png", resizeMode: "contain", backgroundColor: "#ffffff" },
+
   ios: {
-    supportsTablet: true,
-    bundleIdentifier: "com.lamprian.lficare"
+    bundleIdentifier: "com.menelaos.lficare",
+    buildNumber: "1",
+    supportsTablet: false,
+    infoPlist: {
+      NSCameraUsageDescription: "Η κάμερα χρησιμοποιείται για λειτουργίες της εφαρμογής.",
+      NSPhotoLibraryUsageDescription: "Η βιβλιοθήκη φωτογραφιών χρησιμοποιείται για επιλογή/αποστολή εικόνων."
+    }
   },
+
   android: {
-    package: "com.lamprian.lficare",
-    minSdkVersion: 24,
-    compileSdkVersion: 36,
-    targetSdkVersion: 36,
-    adaptiveIcon: {
-      foregroundImage: "./assets/adaptive-icon.png",
-      backgroundColor: "#ffffff"
-    },
-    permissions: [
-      "INTERNET",
-      "RECORD_AUDIO",
-      "VIBRATE",
-      "SYSTEM_ALERT_WINDOW"
-    ],
-    intentFilters: [
-      {
-        action: "VIEW",
-        category: ["BROWSABLE", "DEFAULT"],
-        data: [
-          { scheme: "lficare" },
-          { scheme: "https" }
-        ]
-      }
-    ]
+    package: "com.menelaos.lficare",
+    versionCode: 1,
+    adaptiveIcon: { foregroundImage: "./assets/adaptive-icon.png", backgroundColor: "#ffffff" },
+    permissions: ["INTERNET", "CAMERA"]
   },
+
+  updates: {
+    enabled: true,
+    checkAutomatically: "ON_LOAD",
+    fallbackToCacheTimeout: 0,
+    url: "https://u.expo.dev/YOUR-EAS-PROJECT-ID" // θα συμπληρωθεί μετά το eas build:configure
+  },
+
+  extra: {
+    apiUrl: process.env.EXPO_PUBLIC_API_URL,
+    firebase: {
+      apiKey: process.env.FB_API_KEY,
+      appId: process.env.FB_APP_ID,
+      authDomain: process.env.FB_AUTH_DOMAIN,
+      projectId: process.env.FB_PROJECT_ID,
+      storageBucket: process.env.FB_STORAGE_BUCKET,
+      messagingSenderId: process.env.FB_MESSAGING_SENDER_ID
+    },
+    eas: { projectId: "YOUR-EAS-PROJECT-ID" } // αυτό θα το γράψει το CLI στο πρώτο configure
+  },
+
   plugins: [
     [
       "expo-build-properties",
       {
         android: {
+          // Κρίσιμο για το πρόβλημά σου:
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           minSdkVersion: 24,
           kotlinVersion: "1.9.24",
           javaVersion: "17"
-        
         }
       }
-    ]
-  ],
-  extra: {
-    APP_ENV: process.env.APP_ENV,
-    FB_API_KEY: process.env.FB_API_KEY,
-    FB_AUTH_DOMAIN: process.env.FB_AUTH_DOMAIN,
-    FB_PROJECT_ID: process.env.FB_PROJECT_ID,
-    FB_STORAGE_BUCKET: process.env.FB_STORAGE_BUCKET,
-    FB_MESSAGING_SENDER_ID: process.env.FB_MESSAGING_SENDER_ID,
-    FB_APP_ID: process.env.FB_APP_ID,
-    eas: {
-        projectId: "774fe32f-e4a4-4763-b48e-c6804bc8dff4",
-      },
-  },
-  experiments: {
-    typedRoutes: false
-  }
+    ],
+    // πρόσθεσε εδώ ό,τι άλλο plugin χρησιμοποιείς, π.χ.:
+    // "expo-notifications",
+    // "expo-localization",
+    "expo-router"
+  ]
 });

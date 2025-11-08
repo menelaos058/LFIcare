@@ -3,21 +3,20 @@
 .expo/
 .expo-shared/
 
-# Android
+# Android/iOS native (δεν τα θέλουμε στο repo στο managed)
+android/
+ios/
+
+# Android extras
 android/.gradle/
 android/.idea/
 android/local.properties
 android/*.iml
-android/build/
-android/app/build/
-android/.build/
 android/app/release/
 *.keystore
 *.jks
 
-# iOS
-ios/Pods/
-ios/build/
+# iOS extras
 *.xcworkspace
 *.xcuserstate
 *.xcodeproj/project.xcworkspace/
