@@ -68,6 +68,6 @@ export default ({ config }) => ({
     // πρόσθεσε εδώ ό,τι άλλο plugin χρησιμοποιείς, π.χ.:
     // "expo-notifications",
     // "expo-localization",
-    "expo-router"
+   
   ]
 });
