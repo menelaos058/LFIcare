@@ -7,12 +7,10 @@
       "channel": "development"
     },
     "preview": {
-      "channel": "preview",
-      "autoIncrement": "version"
+      "channel": "preview"
     },
     "production": {
-      "channel": "production",
-      "autoIncrement": true
+      "channel": "production"
     }
   },
   "submit": {
