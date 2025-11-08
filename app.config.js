@@ -16,7 +16,7 @@ export default ({ config }) => ({
   // --- Branding / assets ---
   icon: "./assets/icon.png",
   splash: {
-    image: "./assets/splash.png",
+    image: "./assets/images/splash.png",
     resizeMode: "contain",
     backgroundColor: "#ffffff"
   },
@@ -38,7 +38,7 @@ export default ({ config }) => ({
     package: "com.menelaos.lficare",
     versionCode: 1,
     adaptiveIcon: {
-      foregroundImage: "./assets/adaptive-icon.png",
+      foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
     permissions: ["INTERNET", "CAMERA"]
