@@ -10,7 +10,7 @@ module.exports = ({ config }) => ({
   orientation: "portrait",
   sdkVersion: "52.0.0",
   platforms: ["android", "ios", "web"],
-  newArchEnabled: true, // Reanimated 3.x
+  newArchEnabled: true, 
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.lamprian.lficare"
@@ -46,13 +46,11 @@ module.exports = ({ config }) => ({
       "expo-build-properties",
       {
         android: {
-          compileSdkVersion: 36,
-          targetSdkVersion: 36,
+          compileSdkVersion: 35,
+          targetSdkVersion: 35,
           minSdkVersion: 24,
-          kotlinVersion: "1.9.25",
-          // Αν ποτέ χρειαστείς extra CMake/Ninja/NDK ρυθμίσεις:
-          // ndkVersion: "26.1.10909125",
-          // packagingOptions: { doNotStrip: ["**/*.so"] }
+          kotlinVersion: "1.9.24",
+        
         }
       }
     ]
@@ -64,7 +62,10 @@ module.exports = ({ config }) => ({
     FB_PROJECT_ID: process.env.FB_PROJECT_ID,
     FB_STORAGE_BUCKET: process.env.FB_STORAGE_BUCKET,
     FB_MESSAGING_SENDER_ID: process.env.FB_MESSAGING_SENDER_ID,
-    FB_APP_ID: process.env.FB_APP_ID
+    FB_APP_ID: process.env.FB_APP_ID,
+    eas: {
+        projectId: "774fe32f-e4a4-4763-b48e-c6804bc8dff4",
+      },
   },
   experiments: {
     typedRoutes: false
