@@ -1,4 +1,5 @@
 // screens/ChatScreen.js
+import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
   addDoc,
@@ -12,6 +13,7 @@ import {
   getDownloadURL,
   ref as storageRef,
   uploadBytes,
+  uploadString,
 } from "firebase/storage";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -31,6 +33,7 @@ import {
 import ParsedText from "react-native-parsed-text";
 import { auth, db, storage } from "../firebaseConfig";
 
+// καθαρό URL όταν ο χρήστης στέλνει μόνο link στο input
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
 export default function ChatScreen({ route }) {
@@ -40,12 +43,13 @@ export default function ChatScreen({ route }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // προτείνεται τα emails στο chats/{chatId}.users να είναι lowercase
   const myEmail = useMemo(
     () => (auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null),
     [auth.currentUser?.email]
   );
 
-  // Real-time
+  /* =================== Realtime messages =================== */
   useEffect(() => {
     if (!chatId) return;
     const q = query(
@@ -63,6 +67,100 @@ export default function ChatScreen({ route }) {
     return () => unsub();
   }, [chatId]);
 
+  /* =================== Share from other apps (optional) =================== */
+  useEffect(() => {
+    let listener;
+    (async () => {
+      try {
+        // θα δουλέψει μόνο σε dev/prod build (όχι Expo Go)
+        const mod = await import("react-native-share-menu");
+        const ShareMenu = mod?.default;
+        if (!ShareMenu) return;
+
+        const onShareReceived = async (item) => {
+          try {
+            if (!chatId || !myEmail) return;
+
+            const mime = (item?.mimeType || "").toString();
+            const data = (item?.data ?? "").toString().trim();
+
+            // 1) καθαρό URL → ως link
+            if (EXACT_URL_REGEX.test(data)) {
+              await addDoc(collection(db, "chats", chatId, "messages"), {
+                senderEmail: myEmail,
+                link: data,
+                timestamp: serverTimestamp(),
+              });
+              return;
+            }
+
+            // 2) text (όχι εικόνα) → ως text
+            if (data && !mime.startsWith("image/")) {
+              await addDoc(collection(db, "chats", chatId, "messages"), {
+                senderEmail: myEmail,
+                text: data,
+                timestamp: serverTimestamp(),
+              });
+              return;
+            }
+
+            // 3) εικόνα (Android: συχνά content://, iOS: file://)
+            if (mime.startsWith("image/") && data) {
+              const fileName = `${Date.now()}.jpg`;
+              const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
+
+              // blob → fallback base64
+              try {
+                const resp = await fetch(data);
+                const blob = await resp.blob();
+                await uploadBytes(imgRef, blob, { contentType: mime });
+              } catch {
+                const base64 = await FileSystem.readAsStringAsync(data, {
+                  encoding: FileSystem.EncodingType.Base64,
+                });
+                await uploadString(imgRef, base64, "base64", { contentType: mime });
+              }
+
+              const url = await getDownloadURL(imgRef);
+              await addDoc(collection(db, "chats", chatId, "messages"), {
+                senderEmail: myEmail,
+                image: url,
+                timestamp: serverTimestamp(),
+              });
+              return;
+            }
+
+            // fallback: κράτα ό,τι ήρθε ως text
+            if (data) {
+              await addDoc(collection(db, "chats", chatId, "messages"), {
+                senderEmail: myEmail,
+                text: data,
+                timestamp: serverTimestamp(),
+              });
+            }
+          } catch (e) {
+            console.error("onShareReceived error:", e);
+            Alert.alert("Share failed", e?.message ?? "Could not process shared content.");
+          }
+        };
+
+        listener = ShareMenu.addNewShareListener?.(onShareReceived);
+        ShareMenu.getInitialShare?.().then((initial) => {
+          if (initial) onShareReceived(initial);
+        });
+      } catch {
+        // module δεν υπάρχει → απλώς αγνόησέ το (Expo Go)
+      }
+    })();
+
+    return () => {
+      try {
+        listener?.remove?.();
+      } catch {}
+    };
+  }, [chatId, myEmail]);
+
+  /* =================== Actions =================== */
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -113,46 +211,58 @@ export default function ChatScreen({ route }) {
         return;
       }
 
-      // Νέο API (SDK 52+)
+      // Συμβατότητα με νέο/παλιό API
+      const hasNewEnum = !!ImagePicker?.MediaType;
+      const hasOldEnum = !!ImagePicker?.MediaTypeOptions;
+
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: [ImagePicker.MediaType.Image],
         quality: 0.7,
+        ...(hasNewEnum
+          ? { mediaTypes: [ImagePicker.MediaType.Image] }
+          : hasOldEnum
+            ? { mediaTypes: ImagePicker.MediaTypeOptions.Images }
+            : {}),
       });
 
-      if (!result.canceled && result.assets?.[0]?.uri) {
-        setLoading(true);
-        const asset = result.assets[0];
-        const uri = asset.uri;
-        const mime = asset.mimeType || "image/jpeg";
+      if (result.canceled || !result.assets?.[0]?.uri) return;
 
+      setLoading(true);
+
+      const asset = result.assets[0];
+      const uri = asset.uri;
+      const mime = asset.mimeType || "image/jpeg";
+      const fileName = `${Date.now()}.jpg`;
+      const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
+
+      // 1) δοκίμασε blob
+      try {
         const resp = await fetch(uri);
         const blob = await resp.blob();
-
-        const fileName = `${Date.now()}.jpg`;
-        const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
-
         await uploadBytes(imgRef, blob, { contentType: mime });
-        const url = await getDownloadURL(imgRef);
-
-        await addDoc(collection(db, "chats", chatId, "messages"), {
-          senderEmail: myEmail,
-          image: url,
-          timestamp: serverTimestamp(),
+      } catch {
+        // 2) fallback: base64
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
         });
+        await uploadString(imgRef, base64, "base64", { contentType: mime });
       }
+
+      const url = await getDownloadURL(imgRef);
+
+      await addDoc(collection(db, "chats", chatId, "messages"), {
+        senderEmail: myEmail,
+        image: url, // "image" όπως απαιτούν οι κανόνες
+        timestamp: serverTimestamp(),
+      });
     } catch (error) {
       console.error("Image send failed:", error);
-      const server =
-        error?.customData?.serverResponse ||
-        error?.serverResponse ||
-        error?.message;
-      if (server) console.log("Storage server response:", server);
-      Alert.alert("Error", "Failed to send image.");
+      Alert.alert("Error", error?.message ?? "Failed to send image.");
     } finally {
       setLoading(false);
     }
   };
 
+  /* =================== Helpers =================== */
   const onPressLink = async (url) => {
     try {
       const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
@@ -184,6 +294,7 @@ export default function ChatScreen({ route }) {
           isMine ? styles.myMessage : styles.otherMessage,
         ]}
       >
+        {/* Κείμενο με αυτόματο linkify */}
         {item.text ? (
           <ParsedText
             style={styles.messageText}
@@ -194,6 +305,7 @@ export default function ChatScreen({ route }) {
           </ParsedText>
         ) : null}
 
+        {/* Μήνυμα που είναι καθαρό link */}
         {item.link ? (
           <Text
             style={[styles.messageText, styles.linkText]}
@@ -204,6 +316,7 @@ export default function ChatScreen({ route }) {
           </Text>
         ) : null}
 
+        {/* Εικόνα */}
         {item.image ? <Image source={{ uri: item.image }} style={styles.image} /> : null}
 
         <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
@@ -211,6 +324,7 @@ export default function ChatScreen({ route }) {
     );
   };
 
+  /* =================== UI =================== */
   return (
     <KeyboardAvoidingView
       style={styles.container}
