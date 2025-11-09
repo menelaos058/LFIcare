@@ -31,7 +31,6 @@ import {
 import ParsedText from "react-native-parsed-text";
 import { auth, db, storage } from "../firebaseConfig";
 
-// ακριβές URL μόνο (όταν ο χρήστης στείλει καθαρό URL στο input)
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
 export default function ChatScreen({ route }) {
@@ -41,87 +40,28 @@ export default function ChatScreen({ route }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // ΣΗΜ.: φρόντισε και τα emails στο chats/{chatId}.users να είναι lowercase
   const myEmail = useMemo(
     () => (auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null),
     [auth.currentUser?.email]
   );
 
-  // === Real-time messages ===
+  // Real-time
   useEffect(() => {
     if (!chatId) return;
     const q = query(
       collection(db, "chats", chatId, "messages"),
       orderBy("timestamp", "asc")
     );
-    const unsubscribe = onSnapshot(
+    const unsub = onSnapshot(
       q,
-      (snapshot) => {
-        const msgs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setMessages(msgs);
-      },
+      (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (err) => {
         console.error("Messages subscribe error:", err);
         Alert.alert("Error", err.message);
       }
     );
-    return () => unsubscribe();
+    return () => unsub();
   }, [chatId]);
-
-  // === Share intent (optional, χωρίς static require) ===
-  useEffect(() => {
-    let listener;
-    let ShareMenu;
-
-    (async () => {
-      try {
-        // Θα πετύχει μόνο αν το πακέτο είναι εγκατεστημένο στο dev client
-        const mod = await import("react-native-share-menu");
-        ShareMenu = mod?.default;
-        if (!ShareMenu) return;
-
-        const onShareReceived = (item) => {
-          try {
-            if (!chatId || !myEmail) return;
-            const data = (item?.data ?? "").toString().trim();
-
-            if (EXACT_URL_REGEX.test(data)) {
-              addDoc(collection(db, "chats", chatId, "messages"), {
-                senderEmail: myEmail,
-                link: data,
-                timestamp: serverTimestamp(),
-              }).catch(console.error);
-              return;
-            }
-
-            if (data.length > 0) {
-              addDoc(collection(db, "chats", chatId, "messages"), {
-                senderEmail: myEmail,
-                text: data,
-                timestamp: serverTimestamp(),
-              }).catch(console.error);
-              return;
-            }
-          } catch (e) {
-            console.error("onShareReceived error:", e);
-          }
-        };
-
-        listener = ShareMenu.addNewShareListener?.(onShareReceived);
-        ShareMenu.getInitialShare?.().then((initial) => {
-          if (initial) onShareReceived(initial);
-        });
-      } catch {
-        // Το module δεν υπάρχει → απλώς αγνοούμε το feature
-      }
-    })();
-
-    return () => {
-      try {
-        listener?.remove?.();
-      } catch {}
-    };
-  }, [chatId, myEmail]);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -167,14 +107,13 @@ export default function ChatScreen({ route }) {
     }
 
     try {
-      // 1) Άδεια
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
         Alert.alert("Permission needed", "Please allow photo library access.");
         return;
       }
 
-      // 2) Χρήση νέου API (SDK 52+)
+      // Νέο API (SDK 52+)
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: [ImagePicker.MediaType.Image],
         quality: 0.7,
@@ -186,7 +125,6 @@ export default function ChatScreen({ route }) {
         const uri = asset.uri;
         const mime = asset.mimeType || "image/jpeg";
 
-        // 3) Upload στο Storage του ΙΔΙΟΥ app (storage import από firebaseConfig)
         const resp = await fetch(uri);
         const blob = await resp.blob();
 
@@ -209,15 +147,7 @@ export default function ChatScreen({ route }) {
         error?.serverResponse ||
         error?.message;
       if (server) console.log("Storage server response:", server);
-
-      if (error?.code === "permission-denied") {
-        Alert.alert(
-          "No permission",
-          "You do not have permission to send images in this chat. Έλεγξε ότι τα πεδία είναι senderEmail, image, timestamp."
-        );
-      } else {
-        Alert.alert("Error", "Failed to send image.");
-      }
+      Alert.alert("Error", "Failed to send image.");
     } finally {
       setLoading(false);
     }
@@ -232,7 +162,6 @@ export default function ChatScreen({ route }) {
         await Linking.openURL(clean);
         return;
       }
-
       const ok = await Linking.canOpenURL(clean);
       if (ok) await Linking.openURL(clean);
       else Alert.alert("Cannot open link", clean);
