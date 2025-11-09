@@ -10,7 +10,6 @@ import {
 } from "firebase/firestore";
 import {
   getDownloadURL,
-  getStorage,
   ref as storageRef,
   uploadBytes,
 } from "firebase/storage";
@@ -29,44 +28,32 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { auth, db } from "../firebaseConfig";
+import ParsedText from "react-native-parsed-text";
+import { auth, db, storage } from "../firebaseConfig";
 
-const storage = getStorage();
-
-// Προαιρετικό import για share από άλλες εφαρμογές.
-// Αν δεν έχεις εγκαταστήσει το πακέτο, ο κώδικας δεν θα σκάσει.
-let ShareMenu = null;
-try {
-  // yarn add react-native-share-menu
-  // npx expo prebuild && npx expo run:android|ios
-  ShareMenu = require("react-native-share-menu").default;
-} catch (_) {
-  // noop
-}
-
-const URL_REGEX = /^https?:\/\/[^\s]+$/i;
+// ακριβές URL μόνο (όταν ο χρήστης στείλει καθαρό URL στο input)
+const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
 export default function ChatScreen({ route }) {
-  const { chatId, programTitle } = route.params || {};
+  const { chatId, programTitle } = route?.params ?? {};
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // ΣΗΜ.: φρόντισε και τα emails στο chats/{chatId}.users να είναι lowercase
   const myEmail = useMemo(
     () => (auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null),
     [auth.currentUser?.email]
   );
 
-  // === Real-time messages (ordered by "timestamp") ===
+  // === Real-time messages ===
   useEffect(() => {
     if (!chatId) return;
-
     const q = query(
       collection(db, "chats", chatId, "messages"),
       orderBy("timestamp", "asc")
     );
-
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
@@ -78,62 +65,61 @@ export default function ChatScreen({ route }) {
         Alert.alert("Error", err.message);
       }
     );
-
     return () => unsubscribe();
   }, [chatId]);
 
-  // === Handle share-intent (αν είναι διαθέσιμο το react-native-share-menu) ===
+  // === Share intent (optional, χωρίς static require) ===
   useEffect(() => {
-    if (!ShareMenu) return;
+    let listener;
+    let ShareMenu;
 
-    const onShareReceived = (item) => {
-      // item: {mimeType, data, extraData}
-      // data μπορεί να είναι url ή text ή file.
+    (async () => {
       try {
-        if (!chatId || !myEmail) return;
+        // Θα πετύχει μόνο αν το πακέτο είναι εγκατεστημένο στο dev client
+        const mod = await import("react-native-share-menu");
+        ShareMenu = mod?.default;
+        if (!ShareMenu) return;
 
-        const data = (item?.data ?? "").toString().trim();
+        const onShareReceived = (item) => {
+          try {
+            if (!chatId || !myEmail) return;
+            const data = (item?.data ?? "").toString().trim();
 
-        // Αν είναι URL -> στέλνουμε ως link
-        if (URL_REGEX.test(data)) {
-          addDoc(collection(db, "chats", chatId, "messages"), {
-            senderEmail: myEmail,
-            link: data,
-            timestamp: serverTimestamp(),
-          }).catch(console.error);
-          return;
-        }
+            if (EXACT_URL_REGEX.test(data)) {
+              addDoc(collection(db, "chats", chatId, "messages"), {
+                senderEmail: myEmail,
+                link: data,
+                timestamp: serverTimestamp(),
+              }).catch(console.error);
+              return;
+            }
 
-        // Αλλιώς αν είναι text -> ως text
-        if (data.length > 0) {
-          addDoc(collection(db, "chats", chatId, "messages"), {
-            senderEmail: myEmail,
-            text: data,
-            timestamp: serverTimestamp(),
-          }).catch(console.error);
-          return;
-        }
+            if (data.length > 0) {
+              addDoc(collection(db, "chats", chatId, "messages"), {
+                senderEmail: myEmail,
+                text: data,
+                timestamp: serverTimestamp(),
+              }).catch(console.error);
+              return;
+            }
+          } catch (e) {
+            console.error("onShareReceived error:", e);
+          }
+        };
 
-        // (Optional) Αν λάβεις file path (Android), μπορείς να το ανεβάσεις ως image
-        // αν το mimeType ξεκινά με "image/"
-        // Εδώ απλοποιούμε – τα περισσότερα share intents για link/text καλύπτονται παραπάνω.
-      } catch (e) {
-        console.error("onShareReceived error:", e);
+        listener = ShareMenu.addNewShareListener?.(onShareReceived);
+        ShareMenu.getInitialShare?.().then((initial) => {
+          if (initial) onShareReceived(initial);
+        });
+      } catch {
+        // Το module δεν υπάρχει → απλώς αγνοούμε το feature
       }
-    };
-
-    // Android: persistent listener
-    const listener = ShareMenu.addNewShareListener(onShareReceived);
-
-    // iOS: pull initial (αν άνοιξε από share extension)
-    ShareMenu.getInitialShare?.().then((initial) => {
-      if (initial) onShareReceived(initial);
-    });
+    })();
 
     return () => {
       try {
         listener?.remove?.();
-      } catch (_) {}
+      } catch {}
     };
   }, [chatId, myEmail]);
 
@@ -147,8 +133,7 @@ export default function ChatScreen({ route }) {
     }
 
     try {
-      // Αν ο χρήστης έγραψε URL, στείλτο ως `link`
-      if (URL_REGEX.test(text)) {
+      if (EXACT_URL_REGEX.test(text)) {
         await addDoc(collection(db, "chats", chatId, "messages"), {
           senderEmail: myEmail,
           link: text,
@@ -164,13 +149,13 @@ export default function ChatScreen({ route }) {
       setInput("");
     } catch (error) {
       console.error("Message send failed:", error);
-      if (error.code === "permission-denied") {
+      if (error?.code === "permission-denied") {
         Alert.alert(
           "No permission",
           "You do not have permission to write in this chat. Βεβαιώσου ότι είσαι participant και ότι γράφεις μόνο senderEmail, text/image/link, timestamp."
         );
       } else {
-        Alert.alert("Error", error.message);
+        Alert.alert("Error", error?.message ?? "Failed to send message.");
       }
     }
   };
@@ -182,30 +167,50 @@ export default function ChatScreen({ route }) {
     }
 
     try {
+      // 1) Άδεια
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission needed", "Please allow photo library access.");
+        return;
+      }
+
+      // 2) Χρήση νέου API (SDK 52+)
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: [ImagePicker.MediaType.Image],
         quality: 0.7,
       });
 
       if (!result.canceled && result.assets?.[0]?.uri) {
         setLoading(true);
-        const uri = result.assets[0].uri;
+        const asset = result.assets[0];
+        const uri = asset.uri;
+        const mime = asset.mimeType || "image/jpeg";
 
+        // 3) Upload στο Storage του ΙΔΙΟΥ app (storage import από firebaseConfig)
         const resp = await fetch(uri);
         const blob = await resp.blob();
-        const imgRef = storageRef(storage, `chat-images/${chatId}/${Date.now()}.jpg`);
-        await uploadBytes(imgRef, blob);
+
+        const fileName = `${Date.now()}.jpg`;
+        const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
+
+        await uploadBytes(imgRef, blob, { contentType: mime });
         const url = await getDownloadURL(imgRef);
 
         await addDoc(collection(db, "chats", chatId, "messages"), {
           senderEmail: myEmail,
-          image: url,               // προσοχή: "image" (όχι imageUrl)
+          image: url,
           timestamp: serverTimestamp(),
         });
       }
     } catch (error) {
       console.error("Image send failed:", error);
-      if (error.code === "permission-denied") {
+      const server =
+        error?.customData?.serverResponse ||
+        error?.serverResponse ||
+        error?.message;
+      if (server) console.log("Storage server response:", server);
+
+      if (error?.code === "permission-denied") {
         Alert.alert(
           "No permission",
           "You do not have permission to send images in this chat. Έλεγξε ότι τα πεδία είναι senderEmail, image, timestamp."
@@ -220,10 +225,20 @@ export default function ChatScreen({ route }) {
 
   const onPressLink = async (url) => {
     try {
-      const ok = await Linking.canOpenURL(url);
-      if (ok) await Linking.openURL(url);
+      const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
+      if (!clean) return;
+
+      if (/^https?:\/\//i.test(clean)) {
+        await Linking.openURL(clean);
+        return;
+      }
+
+      const ok = await Linking.canOpenURL(clean);
+      if (ok) await Linking.openURL(clean);
+      else Alert.alert("Cannot open link", clean);
     } catch (e) {
       console.error("openURL error", e);
+      Alert.alert("Cannot open link", url ?? "");
     }
   };
 
@@ -240,12 +255,21 @@ export default function ChatScreen({ route }) {
           isMine ? styles.myMessage : styles.otherMessage,
         ]}
       >
-        {item.text ? <Text style={styles.messageText}>{item.text}</Text> : null}
+        {item.text ? (
+          <ParsedText
+            style={styles.messageText}
+            parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
+            selectable
+          >
+            {item.text}
+          </ParsedText>
+        ) : null}
 
         {item.link ? (
           <Text
             style={[styles.messageText, styles.linkText]}
             onPress={() => onPressLink(item.link)}
+            selectable
           >
             {item.link}
           </Text>
@@ -270,6 +294,7 @@ export default function ChatScreen({ route }) {
         renderItem={renderMessage}
         keyExtractor={(item) => item.id}
         contentContainerStyle={{ padding: 10 }}
+        keyboardShouldPersistTaps="handled"
       />
 
       {loading && (
@@ -319,7 +344,7 @@ const styles = StyleSheet.create({
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
   otherMessage: { backgroundColor: "#fff", alignSelf: "flex-start" },
   messageText: { fontSize: 16, marginBottom: 5 },
-  linkText: { textDecorationLine: "underline" },
+  linkText: { color: "#007bff", textDecorationLine: "underline" },
   senderName: { fontSize: 12, color: "#555", marginTop: 3 },
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
   inputContainer: {
