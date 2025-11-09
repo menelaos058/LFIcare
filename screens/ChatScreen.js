@@ -1,6 +1,7 @@
 // screens/ChatScreen.js
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
+
 import {
   addDoc,
   collection,
@@ -12,9 +13,9 @@ import {
 import {
   getDownloadURL,
   ref as storageRef,
-  uploadBytes,
   uploadString,
 } from "firebase/storage";
+
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -46,10 +47,14 @@ export default function ChatScreen({ route }) {
     [auth.currentUser?.email]
   );
 
+  // === Realtime messages ===
   useEffect(() => {
     if (!chatId) return;
-    const q = query(collection(db, "chats", chatId, "messages"), orderBy("timestamp", "asc"));
-    return onSnapshot(
+    const q = query(
+      collection(db, "chats", chatId, "messages"),
+      orderBy("timestamp", "asc")
+    );
+    const unsub = onSnapshot(
       q,
       (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (err) => {
@@ -57,8 +62,10 @@ export default function ChatScreen({ route }) {
         Alert.alert("Error", err.message);
       }
     );
+    return () => unsub();
   }, [chatId]);
 
+  // === Share intent (προαιρετικό, δεν σπάει αν δεν υπάρχει το πακέτο) ===
   useEffect(() => {
     let listener;
     (async () => {
@@ -70,9 +77,10 @@ export default function ChatScreen({ route }) {
         const onShareReceived = async (item) => {
           try {
             if (!chatId || !myEmail) return;
-            const mime = (item?.mimeType || "").toString();
-            const data = (item?.data ?? "").toString().trim();
+            const mime = String(item?.mimeType || "");
+            const data = String(item?.data ?? "").trim();
 
+            // URL → ως link
             if (EXACT_URL_REGEX.test(data)) {
               await addDoc(collection(db, "chats", chatId, "messages"), {
                 senderEmail: myEmail,
@@ -81,6 +89,8 @@ export default function ChatScreen({ route }) {
               });
               return;
             }
+
+            // Απλό κείμενο
             if (data && !mime.startsWith("image/")) {
               await addDoc(collection(db, "chats", chatId, "messages"), {
                 senderEmail: myEmail,
@@ -89,21 +99,18 @@ export default function ChatScreen({ route }) {
               });
               return;
             }
+
+            // Εικόνα (file:// ή content://)
             if (mime.startsWith("image/") && data) {
+              const base64 = await FileSystem.readAsStringAsync(data, {
+                encoding: FileSystem.EncodingType.Base64,
+              });
               const fileName = `${Date.now()}.jpg`;
-              const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
-
-              // Προσπάθησε απευθείας blob upload (iOS συνήθως οκ)
-              try {
-                const resp = await fetch(data);
-                const blob = await resp.blob();
-                await uploadBytes(imgRef, blob, { contentType: mime });
-              } catch {
-                // Fallback: διάβασε base64 (αν το path είναι file://)
-                const base64 = await FileSystem.readAsStringAsync(data, { encoding: FileSystem.EncodingType.Base64 });
-                await uploadString(imgRef, base64, "base64", { contentType: mime });
-              }
-
+              const imgRef = storageRef(
+                storage,
+                `chat-images/${chatId}/${fileName}`
+              );
+              await uploadString(imgRef, base64, "base64", { contentType: mime });
               const url = await getDownloadURL(imgRef);
               await addDoc(collection(db, "chats", chatId, "messages"), {
                 senderEmail: myEmail,
@@ -119,11 +126,16 @@ export default function ChatScreen({ route }) {
 
         listener = ShareMenu.addNewShareListener?.(onShareReceived);
         ShareMenu.getInitialShare?.().then((initial) => initial && onShareReceived(initial));
-      } catch {}
+      } catch {
+        // module not installed — ignore
+      }
     })();
-    return () => { try { listener?.remove?.(); } catch {} };
+    return () => {
+      try { listener?.remove?.(); } catch {}
+    };
   }, [chatId, myEmail]);
 
+  // === Send text / link ===
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -132,19 +144,14 @@ export default function ChatScreen({ route }) {
       return;
     }
     try {
-      if (EXACT_URL_REGEX.test(text)) {
-        await addDoc(collection(db, "chats", chatId, "messages"), {
-          senderEmail: myEmail,
-          link: text,
-          timestamp: serverTimestamp(),
-        });
-      } else {
-        await addDoc(collection(db, "chats", chatId, "messages"), {
-          senderEmail: myEmail,
-          text,
-          timestamp: serverTimestamp(),
-        });
-      }
+      const payload = EXACT_URL_REGEX.test(text)
+        ? { link: text }
+        : { text };
+      await addDoc(collection(db, "chats", chatId, "messages"), {
+        senderEmail: myEmail,
+        ...payload,
+        timestamp: serverTimestamp(),
+      });
       setInput("");
     } catch (error) {
       console.error("Message send failed:", error);
@@ -159,6 +166,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
+  // === Pick & upload image (base64-first, no Blob) ===
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -171,41 +179,35 @@ export default function ChatScreen({ route }) {
         return;
       }
 
-      // ✅ Ζήτησε base64 για μέγιστη συμβατότητα (Android/Hermes)
       const hasNewEnum = !!ImagePicker?.MediaType;
       const hasOldEnum = !!ImagePicker?.MediaTypeOptions;
+
       const result = await ImagePicker.launchImageLibraryAsync({
         base64: true,
         quality: 0.7,
         ...(hasNewEnum
           ? { mediaTypes: [ImagePicker.MediaType.Image] }
           : hasOldEnum
-            ? { mediaTypes: ImagePicker.MediaTypeOptions.Images }
-            : {}),
+          ? { mediaTypes: ImagePicker.MediaTypeOptions.Images }
+          : {}),
       });
 
       if (result.canceled || !result.assets?.[0]) return;
 
       setLoading(true);
       const asset = result.assets[0];
-      const uri = asset.uri;
       const mime = asset.mimeType || "image/jpeg";
       const fileName = `${Date.now()}.jpg`;
       const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
 
       if (asset.base64) {
-        // ✅ κύρια οδός: ανέβασε το base64 κατευθείαν
         await uploadString(imgRef, asset.base64, "base64", { contentType: mime });
       } else {
-        // Fallback: δοκίμασε blob → μετά base64 από file
-        try {
-          const resp = await fetch(uri);
-          const blob = await resp.blob();
-          await uploadBytes(imgRef, blob, { contentType: mime });
-        } catch {
-          const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-          await uploadString(imgRef, base64, "base64", { contentType: mime });
-        }
+        // Ασφαλές fallback: διάβασε το file:// ως base64
+        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await uploadString(imgRef, base64, "base64", { contentType: mime });
       }
 
       const url = await getDownloadURL(imgRef);
@@ -255,7 +257,11 @@ export default function ChatScreen({ route }) {
         ) : null}
 
         {item.link ? (
-          <Text style={[styles.messageText, styles.linkText]} onPress={() => onPressLink(item.link)} selectable>
+          <Text
+            style={[styles.messageText, styles.linkText]}
+            onPress={() => onPressLink(item.link)}
+            selectable
+          >
             {item.link}
           </Text>
         ) : null}
@@ -281,7 +287,9 @@ export default function ChatScreen({ route }) {
         keyboardShouldPersistTaps="handled"
       />
 
-      {loading && <ActivityIndicator size="large" color="#28a745" style={{ marginVertical: 10 }} />}
+      {loading && (
+        <ActivityIndicator size="large" color="#28a745" style={{ marginVertical: 10 }} />
+      )}
 
       <View style={styles.inputContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.imageButton}>
@@ -308,11 +316,21 @@ export default function ChatScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   headerTitle: {
-    fontSize: 18, fontWeight: "600", color: "#333",
-    paddingVertical: 12, textAlign: "center",
-    backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#ddd",
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    paddingVertical: 12,
+    textAlign: "center",
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
   },
-  messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
+  messageContainer: {
+    padding: 10,
+    borderRadius: 8,
+    marginVertical: 5,
+    maxWidth: "80%",
+  },
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
   otherMessage: { backgroundColor: "#fff", alignSelf: "flex-start" },
   messageText: { fontSize: 16, marginBottom: 5 },
@@ -320,14 +338,28 @@ const styles = StyleSheet.create({
   senderName: { fontSize: 12, color: "#555", marginTop: 3 },
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
   inputContainer: {
-    flexDirection: "row", padding: 10, alignItems: "center",
-    borderTopWidth: 1, borderColor: "#ddd", backgroundColor: "#fff",
+    flexDirection: "row",
+    padding: 10,
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
   input: {
-    flex: 1, backgroundColor: "#f1f1f1", paddingVertical: 10, paddingHorizontal: 15,
-    borderRadius: 20, marginHorizontal: 10, fontSize: 16,
+    flex: 1,
+    backgroundColor: "#f1f1f1",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginHorizontal: 10,
+    fontSize: 16,
   },
-  sendButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20 },
+  sendButton: {
+    backgroundColor: "#28a745",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+  },
   sendButtonText: { color: "#fff", fontWeight: "600" },
   imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25 },
   imageButtonText: { fontSize: 18 },
