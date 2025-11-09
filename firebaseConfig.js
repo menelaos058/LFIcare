@@ -10,11 +10,10 @@ import {
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-// Credentials από app.config.js › extra
-const extra = Constants.expoConfig?.extra ?? {};
-const fb = extra?.firebase ?? {};
+// Παίρνουμε τα credentials από app.config.js › extra.firebase
+const fb = Constants.expoConfig?.extra?.firebase ?? {};
 
-export const firebaseConfig = {
+const firebaseConfig = {
   apiKey: fb.apiKey,
   authDomain: fb.authDomain,
   projectId: fb.projectId,
@@ -23,21 +22,23 @@ export const firebaseConfig = {
   appId: fb.appId,
 };
 
-// Single app instance
+// ➤ Μία και μοναδική Firebase App instance
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// Single auth instance με persistence (αν δεν υπάρχει ήδη)
+// ➤ ΠΡΩΤΑ επιχειρούμε initializeAuth με AsyncStorage persistence.
+//    Αν έχει ήδη γίνει init (π.χ. hot reload), κάνουμε fallback σε getAuth(app).
 let auth;
 try {
-  auth = getAuth(app);
-} catch {
   auth = initializeAuth(app, {
     persistence: getReactNativePersistence(AsyncStorage),
   });
+} catch {
+  auth = getAuth(app);
 }
 
-export { app };
-export const db = getFirestore(app);
-export const storage = getStorage(app);
-export { auth };
+// ➤ Οι υπόλοιπες υπηρεσίες από το ΙΔΙΟ app
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+export { app, auth, db, storage };
 export default app;
