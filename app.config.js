@@ -4,16 +4,13 @@ import 'dotenv/config';
 export default ({ config }) => ({
   ...config,
 
-  // --- App metadata ---
   name: "LFIcare",
   slug: "lficare",
   scheme: "lficare",
   version: "1.0.0",
   runtimeVersion: { policy: "sdkVersion" },
-
   orientation: "portrait",
 
-  // --- Branding / assets ---
   icon: "./assets/images/icon.png",
   splash: {
     image: "./assets/images/splash.png",
@@ -21,36 +18,29 @@ export default ({ config }) => ({
     backgroundColor: "#ffffff"
   },
 
-  // --- iOS ---
   ios: {
-    bundleIdentifier: "com.MyFirstProj",
+    bundleIdentifier: "com.menelaos.lficare",
     buildNumber: "1",
     supportsTablet: false,
+    deploymentTarget: "15.1",               // 👈 ΑΠΑΡΑΙΤΗΤΟ
     infoPlist: {
       NSCameraUsageDescription: "Η κάμερα χρησιμοποιείται για λειτουργίες της εφαρμογής.",
       NSPhotoLibraryUsageDescription: "Η βιβλιοθήκη φωτογραφιών χρησιμοποιείται για επιλογή/αποστολή εικόνων.",
       NSPhotoLibraryAddUsageDescription: "Η εφαρμογή χρειάζεται πρόσβαση για αποθήκευση εικόνων."
-    },
-    // <-- Βάλε το πραγματικό σου αρχείο στη ρίζα του project
-    googleServicesFile: "./GoogleService-Info.plist"
+    }
   },
 
-  // --- Android ---
   android: {
-    package: "com.men.lficare",
+    package: "com.menelaos.lficare",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
-    // Για image picker σε σύγχρονες εκδόσεις
-    permissions: ["INTERNET", "CAMERA", "READ_MEDIA_IMAGES"],
-    jsEngine: "hermes",
-    // <-- Βάλε το πραγματικό σου αρχείο στη ρίζα του project
-    googleServicesFile: "./google-services.json"
+    permissions: ["INTERNET", "CAMERA"],
+    jsEngine: "hermes"
   },
 
-  // --- OTA Updates (EAS Update) ---
   updates: {
     enabled: true,
     checkAutomatically: "ON_LOAD",
@@ -58,7 +48,6 @@ export default ({ config }) => ({
     url: "https://u.expo.dev/b8f57f4d-6894-4dcd-a21b-ddaf2fa2f638"
   },
 
-  // --- Public runtime config (διαθέσιμο στο client) ---
   extra: {
     apiUrl: process.env.EXPO_PUBLIC_API_URL ?? process.env.API_URL,
     firebase: {
@@ -72,9 +61,7 @@ export default ({ config }) => ({
     eas: { projectId: process.env.EAS_PROJECT_ID }
   },
 
-  // --- Plugins ---
   plugins: [
-    "@react-native-firebase/app",
     [
       "expo-build-properties",
       {

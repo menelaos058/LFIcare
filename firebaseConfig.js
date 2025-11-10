@@ -8,9 +8,32 @@ import {
   initializeAuth,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
-// Παίρνουμε τα credentials από app.config.js › extra.firebase
-const fb = Constants.expoConfig?.extra?.firebase ?? {};
+// ⚙️ Πάρε extra από όπου κι αν τρέχει (dev client, EAS build, OTA)
+const extra =
+  Constants.expoConfig?.extra ??
+  Constants.manifestExtra /* παλιό */ ??
+  {};
+
+const fb = extra?.firebase ?? {};
+
+const requiredKeys = [
+  "apiKey",
+  "appId",
+  "authDomain",
+  "projectId",
+  "storageBucket",
+  "messagingSenderId",
+];
+for (const k of requiredKeys) {
+  if (!fb[k]) {
+    throw new Error(
+      `[FirebaseConfig] Missing "${k}" in extra.firebase. 
+       Έλεγξε .env (EXPO_PUBLIC_FB_*) και το app.config.js -> extra.firebase`
+    );
+  }
+}
 
 const firebaseConfig = {
   apiKey: fb.apiKey,
@@ -27,15 +50,14 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 // Auth με AsyncStorage persistence (RN)
 let auth;
 try {
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
+  auth = initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
 } catch {
+  // σε hot-reload / διπλή init
   auth = getAuth(app);
 }
 
 const db = getFirestore(app);
+const storage = getStorage(app);
 
-// ΣΗΜ.: Δεν κάνουμε export storage (native uploads με @react-native-firebase/storage)
-export { app, auth, db };
+export { app, auth, db, storage };
 export default app;
