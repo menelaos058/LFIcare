@@ -87,7 +87,7 @@ export default ({ config }) => ({
           composeCompilerVersion: "1.5.15"
         },
         ios: {
-          deploymentTarget: "13.0"
+          deploymentTarget: "15.1"
         }
       }
     ],
