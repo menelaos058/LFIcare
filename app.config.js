@@ -31,7 +31,7 @@ export default ({ config }) => ({
   },
 
   android: {
-    package: "com.menelaos.lficare",
+    package: "com.men.lficare",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
