@@ -82,6 +82,7 @@ export default ({ config }) => ({
         }
       }
     ],
+    
     "expo-updates"
   ],
 
