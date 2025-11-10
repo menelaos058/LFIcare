@@ -8,7 +8,6 @@ import {
   initializeAuth,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getStorage } from "firebase/storage";
 
 // Παίρνουμε τα credentials από app.config.js › extra.firebase
 const fb = Constants.expoConfig?.extra?.firebase ?? {};
@@ -36,7 +35,7 @@ try {
 }
 
 const db = getFirestore(app);
-const storage = getStorage(app);
 
-export { app, auth, db, storage };
+// ΣΗΜ.: Δεν κάνουμε export storage (native uploads με @react-native-firebase/storage)
+export { app, auth, db };
 export default app;

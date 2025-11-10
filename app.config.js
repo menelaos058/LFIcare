@@ -23,26 +23,31 @@ export default ({ config }) => ({
 
   // --- iOS ---
   ios: {
-    bundleIdentifier: "com.menelaos.lficare",
+    bundleIdentifier: "com.MyFirstProj ",
     buildNumber: "1",
     supportsTablet: false,
     infoPlist: {
       NSCameraUsageDescription: "Η κάμερα χρησιμοποιείται για λειτουργίες της εφαρμογής.",
       NSPhotoLibraryUsageDescription: "Η βιβλιοθήκη φωτογραφιών χρησιμοποιείται για επιλογή/αποστολή εικόνων.",
       NSPhotoLibraryAddUsageDescription: "Η εφαρμογή χρειάζεται πρόσβαση για αποθήκευση εικόνων."
-    }
+    },
+    // <-- Βάλε το πραγματικό σου αρχείο στη ρίζα του project
+    googleServicesFile: "./GoogleService-Info.plist"
   },
 
   // --- Android ---
   android: {
-    package: "com.menelaos.lficare",
+    package: "com.MyFirstProj ",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
-    permissions: ["INTERNET", "CAMERA"],
-    jsEngine: "hermes"
+    // Για image picker σε σύγχρονες εκδόσεις
+    permissions: ["INTERNET", "CAMERA", "READ_MEDIA_IMAGES"],
+    jsEngine: "hermes",
+    // <-- Βάλε το πραγματικό σου αρχείο στη ρίζα του project
+    googleServicesFile: "./google-services.json"
   },
 
   // --- OTA Updates (EAS Update) ---
@@ -69,6 +74,7 @@ export default ({ config }) => ({
 
   // --- Plugins ---
   plugins: [
+    "@react-native-firebase/app",
     [
       "expo-build-properties",
       {
@@ -79,10 +85,12 @@ export default ({ config }) => ({
           kotlinVersion: "1.9.25",
           javaVersion: "17",
           composeCompilerVersion: "1.5.15"
+        },
+        ios: {
+          deploymentTarget: "13.0"
         }
       }
     ],
-    "@react-native-firebase/app",
     "expo-updates"
   ],
 

@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "140825971576",
+    "firebase_url": "https://healthcome-b82b3-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "healthcome-b82b3",
+    "storage_bucket": "healthcome-b82b3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:140825971576:android:777160924d0291abcf168d",
+        "android_client_info": {
+          "package_name": "com.MyFirstProj"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDdOt5oZKJckNP76hOTxiKIBjBJZ0_MhPk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
