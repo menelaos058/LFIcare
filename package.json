@@ -65,6 +65,7 @@
     }
   },
   "devDependencies": {
+    "@react-native-community/cli": "^20.0.2",
     "@types/react": "18.3.26",
     "expo-build-properties": "^0.13.3",
     "patch-package": "^8.0.0",

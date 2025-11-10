@@ -1,19 +1,32 @@
 // screens/ChatScreen.js
+import storageRN from "@react-native-firebase/storage";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
-  addDoc, collection, onSnapshot, orderBy, query, serverTimestamp,
+  addDoc,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
 } from "firebase/firestore";
-import {
-  getDownloadURL, ref as storageRef, uploadString,
-} from "firebase/storage";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Linking,
-  Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
-import { auth, db, storage } from "../firebaseConfig";
+import { auth, db } from "../firebaseConfig"; // ❗️Δεν εισάγουμε firebase/storage εδώ
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
@@ -24,14 +37,15 @@ const guessExtFromMime = (mime) => {
   if (/heic|heif/i.test(mime)) return "heic";
   return "jpg";
 };
-const toDataUrl = (base64, mime = "image/jpeg") => `data:${mime};base64,${base64}`;
 
 async function fetchOg(url) {
   try {
     const res = await fetch(url, { method: "GET", headers: { Accept: "text/html" } });
     const html = await res.text();
     const get = (prop) => {
-      const m = html.match(new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i"));
+      const m = html.match(
+        new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i")
+      );
       return m?.[1];
     };
     const title = get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
@@ -49,13 +63,17 @@ function LinkPreviewCard({ url, onPress }) {
   useEffect(() => {
     mounted.current = true;
     fetchOg(url).then((d) => mounted.current && setData(d));
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, [url]);
   return (
     <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
       {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImage} /> : null}
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
+        <Text numberOfLines={1} style={styles.cardTitle}>
+          {data?.title || url}
+        </Text>
         {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
         <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
       </View>
@@ -75,10 +93,15 @@ export default function ChatScreen({ route }) {
     [auth.currentUser?.email]
   );
 
+  // === Subscribe messages ===
   useEffect(() => {
     if (!chatId) return;
-    const q = query(collection(db, "chats", chatId, "messages"), orderBy("timestamp", "asc"));
-    const unsub = onSnapshot(q,
+    const q = query(
+      collection(db, "chats", chatId, "messages"),
+      orderBy("timestamp", "asc")
+    );
+    const unsub = onSnapshot(
+      q,
       (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (err) => {
         console.error("Messages subscribe error:", err);
@@ -88,6 +111,7 @@ export default function ChatScreen({ route }) {
     return () => unsub();
   }, [chatId]);
 
+  // === Send text / URL ===
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -109,6 +133,25 @@ export default function ChatScreen({ route }) {
     }
   };
 
+  // === Native base64 upload (no Blob/ArrayBuffer) ===
+  async function uploadBase64Native(base64, mime, path, onProgress) {
+    const ref = storageRN().ref(path);
+    const task = ref.putString(base64, "base64", { contentType: mime });
+    return await new Promise((resolve, reject) => {
+      task.on(
+        "state_changed",
+        (snap) => {
+          if (onProgress && snap.totalBytes) {
+            onProgress((snap.bytesTransferred / snap.totalBytes) * 100);
+          }
+        },
+        reject,
+        async () => resolve(await ref.getDownloadURL())
+      );
+    });
+  }
+
+  // === Pick & upload image (album) ===
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -121,11 +164,10 @@ export default function ChatScreen({ route }) {
         return;
       }
 
-      // ✅ SDK 52: χρησιμοποίησε το νέο API
+      // SDK 52+: χωρίς deprecated MediaTypeOptions
       const result = await ImagePicker.launchImageLibraryAsync({
         base64: true,
         quality: 0.7,
-        mediaTypes: [ImagePicker.MediaType.Image],  // 👈 αντί για MediaTypeOptions.Images
       });
       if (result.canceled || !result.assets?.[0]) return;
 
@@ -147,10 +189,7 @@ export default function ChatScreen({ route }) {
         });
       }
 
-      const dataUrl = toDataUrl(base64, mime);
-      const imgRef = storageRef(storage, path);
-      await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
-      const url = await getDownloadURL(imgRef);
+      const url = await uploadBase64Native(base64, mime, path, setUploadPct);
 
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
@@ -170,7 +209,10 @@ export default function ChatScreen({ route }) {
     try {
       const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
       if (!clean) return;
-      if (/^https?:\/\//i.test(clean)) { await Linking.openURL(clean); return; }
+      if (/^https?:\/\//i.test(clean)) {
+        await Linking.openURL(clean);
+        return;
+      }
       const ok = await Linking.canOpenURL(clean);
       if (ok) await Linking.openURL(clean);
       else Alert.alert("Cannot open link", clean);
@@ -181,12 +223,18 @@ export default function ChatScreen({ route }) {
   };
 
   const renderMessage = ({ item }) => {
-    const isMine = myEmail && typeof item.senderEmail === "string"
-      ? item.senderEmail.toLowerCase() === myEmail
-      : false;
+    const isMine =
+      myEmail && typeof item.senderEmail === "string"
+        ? item.senderEmail.toLowerCase() === myEmail
+        : false;
 
     return (
-      <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
+      <View
+        style={[
+          styles.messageContainer,
+          isMine ? styles.myMessage : styles.otherMessage,
+        ]}
+      >
         {item.text ? (
           <ParsedText
             style={styles.messageText}
@@ -203,14 +251,19 @@ export default function ChatScreen({ route }) {
           </View>
         ) : null}
 
-        {item.image ? <Image source={{ uri: item.image }} style={styles.image} /> : null}
+        {item.image ? (
+          <Image source={{ uri: item.image }} style={styles.image} />
+        ) : null}
         <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
       </View>
     );
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <Text style={styles.headerTitle}>{programTitle || "Chat"}</Text>
 
       <FlatList
@@ -223,8 +276,10 @@ export default function ChatScreen({ route }) {
 
       {loading && (
         <View style={{ padding: 8, alignItems: "center" }}>
-          <ActivityIndicator size="large" color="#28a745" />
-          {uploadPct > 0 ? <Text style={{ marginTop: 6 }}>{uploadPct.toFixed(0)}%</Text> : null}
+          <ActivityIndicator size="large" />
+          {uploadPct > 0 ? (
+            <Text style={{ marginTop: 6 }}>{uploadPct.toFixed(0)}%</Text>
+          ) : null}
         </View>
       )}
 
@@ -253,8 +308,14 @@ export default function ChatScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   headerTitle: {
-    fontSize: 18, fontWeight: "600", color: "#333", paddingVertical: 12,
-    textAlign: "center", backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#ddd",
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    paddingVertical: 12,
+    textAlign: "center",
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
   },
   messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
@@ -264,22 +325,40 @@ const styles = StyleSheet.create({
   senderName: { fontSize: 12, color: "#555", marginTop: 3 },
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
   inputContainer: {
-    flexDirection: "row", padding: 10, alignItems: "center",
-    borderTopWidth: 1, borderColor: "#ddd", backgroundColor: "#fff",
+    flexDirection: "row",
+    padding: 10,
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
   input: {
-    flex: 1, backgroundColor: "#f1f1f1", paddingVertical: 10, paddingHorizontal: 15,
-    borderRadius: 20, marginHorizontal: 10, fontSize: 16,
+    flex: 1,
+    backgroundColor: "#f1f1f1",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginHorizontal: 10,
+    fontSize: 16,
   },
-  sendButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20 },
+  sendButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    backgroundColor: "#28a745",
+  },
   sendButtonText: { color: "#fff", fontWeight: "600" },
   imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25, marginRight: 6 },
   imageButtonText: { fontSize: 18 },
 
   // Link card
   card: {
-    flexDirection: "row", backgroundColor: "#fff", borderRadius: 10,
-    borderWidth: 1, borderColor: "#eee", overflow: "hidden",
+    flexDirection: "row",
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#eee",
+    overflow: "hidden",
   },
   cardImage: { width: 80, height: 80 },
   cardTitle: { fontWeight: "600", marginHorizontal: 10, marginTop: 8 },
