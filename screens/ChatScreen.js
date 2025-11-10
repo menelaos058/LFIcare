@@ -65,76 +65,6 @@ export default function ChatScreen({ route }) {
     return () => unsub();
   }, [chatId]);
 
-  // === Share intent (προαιρετικό, δεν σπάει αν δεν υπάρχει το πακέτο) ===
-  useEffect(() => {
-    let listener;
-    (async () => {
-      try {
-        const mod = await import("react-native-share-menu");
-        const ShareMenu = mod?.default;
-        if (!ShareMenu) return;
-
-        const onShareReceived = async (item) => {
-          try {
-            if (!chatId || !myEmail) return;
-            const mime = String(item?.mimeType || "");
-            const data = String(item?.data ?? "").trim();
-
-            // URL → ως link
-            if (EXACT_URL_REGEX.test(data)) {
-              await addDoc(collection(db, "chats", chatId, "messages"), {
-                senderEmail: myEmail,
-                link: data,
-                timestamp: serverTimestamp(),
-              });
-              return;
-            }
-
-            // Απλό κείμενο
-            if (data && !mime.startsWith("image/")) {
-              await addDoc(collection(db, "chats", chatId, "messages"), {
-                senderEmail: myEmail,
-                text: data,
-                timestamp: serverTimestamp(),
-              });
-              return;
-            }
-
-            // Εικόνα (file:// ή content://)
-            if (mime.startsWith("image/") && data) {
-              const base64 = await FileSystem.readAsStringAsync(data, {
-                encoding: FileSystem.EncodingType.Base64,
-              });
-              const fileName = `${Date.now()}.jpg`;
-              const imgRef = storageRef(
-                storage,
-                `chat-images/${chatId}/${fileName}`
-              );
-              await uploadString(imgRef, base64, "base64", { contentType: mime });
-              const url = await getDownloadURL(imgRef);
-              await addDoc(collection(db, "chats", chatId, "messages"), {
-                senderEmail: myEmail,
-                image: url,
-                timestamp: serverTimestamp(),
-              });
-            }
-          } catch (e) {
-            console.error("onShareReceived error:", e);
-            Alert.alert("Share failed", e?.message ?? "Could not process shared content.");
-          }
-        };
-
-        listener = ShareMenu.addNewShareListener?.(onShareReceived);
-        ShareMenu.getInitialShare?.().then((initial) => initial && onShareReceived(initial));
-      } catch {
-        // module not installed — ignore
-      }
-    })();
-    return () => {
-      try { listener?.remove?.(); } catch {}
-    };
-  }, [chatId, myEmail]);
-
   // === Send text / link ===
   const sendMessage = async () => {
     const text = input.trim();
@@ -144,9 +74,7 @@ export default function ChatScreen({ route }) {
       return;
     }
     try {
-      const payload = EXACT_URL_REGEX.test(text)
-        ? { link: text }
-        : { text };
+      const payload = EXACT_URL_REGEX.test(text) ? { link: text } : { text };
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
         ...payload,
@@ -166,7 +94,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // === Pick & upload image (base64-first, no Blob) ===
+  // === Pick & upload image (base64-only, no Blob) ===
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -179,31 +107,28 @@ export default function ChatScreen({ route }) {
         return;
       }
 
-      const hasNewEnum = !!ImagePicker?.MediaType;
-      const hasOldEnum = !!ImagePicker?.MediaTypeOptions;
-
-      const result = await ImagePicker.launchImageLibraryAsync({
+      const supportsNewEnum = !!ImagePicker?.MediaType;
+      const options = {
         base64: true,
         quality: 0.7,
-        ...(hasNewEnum
-          ? { mediaTypes: [ImagePicker.MediaType.Image] }
-          : hasOldEnum
-          ? { mediaTypes: ImagePicker.MediaTypeOptions.Images }
-          : {}),
-      });
+        ...(supportsNewEnum ? { mediaTypes: [ImagePicker.MediaType.Image] } : {}),
+      };
 
+      const result = await ImagePicker.launchImageLibraryAsync(options);
       if (result.canceled || !result.assets?.[0]) return;
 
       setLoading(true);
+
       const asset = result.assets[0];
       const mime = asset.mimeType || "image/jpeg";
       const fileName = `${Date.now()}.jpg`;
       const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
 
+      // ✅ Κύρια οδός: base64 από το picker
       if (asset.base64) {
         await uploadString(imgRef, asset.base64, "base64", { contentType: mime });
       } else {
-        // Ασφαλές fallback: διάβασε το file:// ως base64
+        // Fallback: διάβασε το file:// ως base64 (ασφαλές για Android/Hermes)
         const base64 = await FileSystem.readAsStringAsync(asset.uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
@@ -219,6 +144,59 @@ export default function ChatScreen({ route }) {
     } catch (error) {
       console.error("Image send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send image.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // === Upload image from Internet URL (download → base64 → Storage) ===
+  const sendImageFromUrl = async () => {
+    const urlInput = (input || "").trim();
+    if (!/^https?:\/\/\S+/i.test(urlInput)) {
+      Alert.alert("Invalid URL", "Βάλε ένα έγκυρο http(s) URL στο πεδίο.");
+      return;
+    }
+    if (!chatId || !myEmail) {
+      Alert.alert("Error", "Not authenticated or no chat selected.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+
+      // Κατέβασε προσωρινά την εικόνα
+      const fileName = `${Date.now()}.jpg`;
+      const localPath = `${FileSystem.cacheDirectory}${fileName}`;
+      const dl = await FileSystem.downloadAsync(urlInput, localPath);
+
+      // Μάντεψε mime
+      let mime = "image/jpeg";
+      const ct = dl?.headers?.["Content-Type"] || dl?.headers?.["content-type"];
+      if (typeof ct === "string" && ct.startsWith("image/")) mime = ct;
+      else if (/\.(png)$/i.test(urlInput)) mime = "image/png";
+      else if (/\.(webp)$/i.test(urlInput)) mime = "image/webp";
+      else if (/\.(gif)$/i.test(urlInput)) mime = "image/gif";
+
+      // Διάβασε base64 και ανέβασε
+      const base64 = await FileSystem.readAsStringAsync(localPath, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
+      await uploadString(imgRef, base64, "base64", { contentType: mime });
+      const publicUrl = await getDownloadURL(imgRef);
+
+      // Καθάρισμα cache (best effort)
+      try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch {}
+
+      await addDoc(collection(db, "chats", chatId, "messages"), {
+        senderEmail: myEmail,
+        image: publicUrl,
+        timestamp: serverTimestamp(),
+      });
+      setInput("");
+    } catch (e) {
+      console.error("sendImageFromUrl failed:", e);
+      Alert.alert("Error", e?.message ?? "Failed to upload image from link.");
     } finally {
       setLoading(false);
     }
@@ -294,6 +272,10 @@ export default function ChatScreen({ route }) {
       <View style={styles.inputContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.imageButton}>
           <Text style={styles.imageButtonText}>📷</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={sendImageFromUrl} style={[styles.imageButton, { marginLeft: 6 }]}>
+          <Text style={styles.imageButtonText}>🌐</Text>
         </TouchableOpacity>
 
         <TextInput
