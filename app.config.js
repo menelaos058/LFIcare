@@ -23,7 +23,7 @@ export default ({ config }) => ({
 
   // --- iOS ---
   ios: {
-    bundleIdentifier: "com.MyFirstProj ",
+    bundleIdentifier: "com.MyFirstProj",
     buildNumber: "1",
     supportsTablet: false,
     infoPlist: {
@@ -37,7 +37,7 @@ export default ({ config }) => ({
 
   // --- Android ---
   android: {
-    package: "com.MyFirstProj ",
+    package: "com.men.lficare",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
