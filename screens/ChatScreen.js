@@ -2,32 +2,15 @@
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
 import {
-  addDoc,
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
+  addDoc, collection, onSnapshot, orderBy, query, serverTimestamp,
 } from "firebase/firestore";
 import {
-  getDownloadURL,
-  ref as storageRef,
-  uploadString,
+  getDownloadURL, ref as storageRef, uploadString,
 } from "firebase/storage";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Image,
-  KeyboardAvoidingView,
-  Linking,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+  ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Linking,
+  Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
 import { auth, db, storage } from "../firebaseConfig";
@@ -41,8 +24,43 @@ function guessExtFromMime(mime) {
   if (/heic|heif/i.test(mime)) return "heic";
   return "jpg";
 }
-function toDataUrl(base64, mime = "image/jpeg") {
-  return `data:${mime};base64,${base64}`;
+const toDataUrl = (base64, mime = "image/jpeg") => `data:${mime};base64,${base64}`;
+
+async function fetchOg(url) {
+  try {
+    const res = await fetch(url, { method: "GET", headers: { Accept: "text/html" } });
+    const html = await res.text();
+    const get = (prop) => {
+      const m = html.match(new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i"));
+      return m?.[1];
+    };
+    const title = get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
+    const desc = get("og:description") || "";
+    const image = get("og:image") || null;
+    return { title, desc, image };
+  } catch {
+    return { title: url, desc: "", image: null };
+  }
+}
+
+function LinkPreviewCard({ url, onPress }) {
+  const [data, setData] = useState(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    fetchOg(url).then((d) => mounted.current && setData(d));
+    return () => { mounted.current = false; };
+  }, [url]);
+  return (
+    <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
+      {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImage} /> : null}
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
+        {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
+        <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
+      </View>
+    </TouchableOpacity>
+  );
 }
 
 export default function ChatScreen({ route }) {
@@ -50,6 +68,7 @@ export default function ChatScreen({ route }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
 
   const myEmail = useMemo(
     () => (auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null),
@@ -58,12 +77,8 @@ export default function ChatScreen({ route }) {
 
   useEffect(() => {
     if (!chatId) return;
-    const q = query(
-      collection(db, "chats", chatId, "messages"),
-      orderBy("timestamp", "asc")
-    );
-    const unsub = onSnapshot(
-      q,
+    const q = query(collection(db, "chats", chatId, "messages"), orderBy("timestamp", "asc"));
+    const unsub = onSnapshot(q,
       (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (err) => {
         console.error("Messages subscribe error:", err);
@@ -90,18 +105,10 @@ export default function ChatScreen({ route }) {
       setInput("");
     } catch (error) {
       console.error("Message send failed:", error);
-      if (error?.code === "permission-denied") {
-        Alert.alert(
-          "No permission",
-          "You do not have permission to write in this chat."
-        );
-      } else {
-        Alert.alert("Error", error?.message ?? "Failed to send message.");
-      }
+      Alert.alert("Error", error?.message ?? "Failed to send message.");
     }
   };
 
-  // === Pick from album → upload via data_url
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -114,35 +121,39 @@ export default function ChatScreen({ route }) {
         return;
       }
 
-      const supportsNewEnum = !!ImagePicker?.MediaType;
-      const options = {
+      // Στο SDK 16 ΔΕΝ χρησιμοποιούμε MediaTypeOptions (deprecated)
+      const result = await ImagePicker.launchImageLibraryAsync({
         base64: true,
         quality: 0.7,
-        ...(supportsNewEnum ? { mediaTypes: [ImagePicker.MediaType.Image] } : {}),
-      };
-
-      const result = await ImagePicker.launchImageLibraryAsync(options);
+        // ή: mediaTypes: [ImagePicker.MediaType.Image]
+      });
       if (result.canceled || !result.assets?.[0]) return;
 
       setLoading(true);
+      setUploadPct(0);
 
       const asset = result.assets[0];
+      // Guard για να αποφύγουμε undefined
+      if (!asset.uri) throw new Error("No asset uri from picker");
+
       const mime = asset.mimeType || "image/jpeg";
       const ext = guessExtFromMime(mime);
       const fileName = `${Date.now()}.${ext}`;
-      const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
+      const path = `chat-images/${chatId}/${fileName}`;
 
-      const base64 =
-        asset.base64 ??
-        (await FileSystem.readAsStringAsync(asset.uri, {
+      let base64 = asset.base64;
+      if (!base64) {
+        // Fallback: διάβασε το file:// ως base64
+        base64 = await FileSystem.readAsStringAsync(asset.uri, {
           encoding: FileSystem.EncodingType.Base64,
-        }));
+        });
+      }
 
       const dataUrl = toDataUrl(base64, mime);
-
+      const imgRef = storageRef(storage, path);
       await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
-
       const url = await getDownloadURL(imgRef);
+
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
         image: url,
@@ -153,60 +164,7 @@ export default function ChatScreen({ route }) {
       Alert.alert("Error", error?.message ?? "Failed to send image.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  // === Paste an internet image URL → download → data_url → upload
-  const sendImageFromUrl = async () => {
-    const urlInput = (input || "").trim();
-    if (!/^https?:\/\/\S+/i.test(urlInput)) {
-      Alert.alert("Invalid URL", "Βάλε ένα έγκυρο http(s) URL στο πεδίο.");
-      return;
-    }
-    if (!chatId || !myEmail) {
-      Alert.alert("Error", "Not authenticated or no chat selected.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      const tmpName = `${Date.now()}`;
-      const localPath = `${FileSystem.cacheDirectory}${tmpName}`;
-      const dl = await FileSystem.downloadAsync(urlInput, localPath);
-
-      let mime = "image/jpeg";
-      const ct = dl?.headers?.["Content-Type"] || dl?.headers?.["content-type"];
-      if (typeof ct === "string" && /^image\//i.test(ct)) mime = ct;
-      else if (/\.(png)(\?|#|$)/i.test(urlInput)) mime = "image/png";
-      else if (/\.(webp)(\?|#|$)/i.test(urlInput)) mime = "image/webp";
-      else if (/\.(gif)(\?|#|$)/i.test(urlInput)) mime = "image/gif";
-
-      const ext = guessExtFromMime(mime);
-      const fileName = `${tmpName}.${ext}`;
-
-      const base64 = await FileSystem.readAsStringAsync(localPath, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      const dataUrl = toDataUrl(base64, mime);
-
-      const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
-      await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
-      const publicUrl = await getDownloadURL(imgRef);
-
-      try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch {}
-
-      await addDoc(collection(db, "chats", chatId, "messages"), {
-        senderEmail: myEmail,
-        image: publicUrl,
-        timestamp: serverTimestamp(),
-      });
-      setInput("");
-    } catch (e) {
-      console.error("sendImageFromUrl failed:", e);
-      Alert.alert("Error", e?.message ?? "Failed to upload image from link.");
-    } finally {
-      setLoading(false);
+      setUploadPct(0);
     }
   };
 
@@ -225,10 +183,9 @@ export default function ChatScreen({ route }) {
   };
 
   const renderMessage = ({ item }) => {
-    const isMine =
-      myEmail && typeof item.senderEmail === "string"
-        ? item.senderEmail.toLowerCase() === myEmail
-        : false;
+    const isMine = myEmail && typeof item.senderEmail === "string"
+      ? item.senderEmail.toLowerCase() === myEmail
+      : false;
 
     return (
       <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
@@ -243,13 +200,9 @@ export default function ChatScreen({ route }) {
         ) : null}
 
         {item.link ? (
-          <Text
-            style={[styles.messageText, styles.linkText]}
-            onPress={() => onPressLink(item.link)}
-            selectable
-          >
-            {item.link}
-          </Text>
+          <View style={{ marginBottom: 6, maxWidth: 280 }}>
+            <LinkPreviewCard url={item.link} onPress={onPressLink} />
+          </View>
         ) : null}
 
         {item.image ? <Image source={{ uri: item.image }} style={styles.image} /> : null}
@@ -259,10 +212,7 @@ export default function ChatScreen({ route }) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <Text style={styles.headerTitle}>{programTitle || "Chat"}</Text>
 
       <FlatList
@@ -274,16 +224,15 @@ export default function ChatScreen({ route }) {
       />
 
       {loading && (
-        <ActivityIndicator size="large" color="#28a745" style={{ marginVertical: 10 }} />
+        <View style={{ padding: 8, alignItems: "center" }}>
+          <ActivityIndicator size="large" color="#28a745" />
+          {uploadPct > 0 ? <Text style={{ marginTop: 6 }}>{uploadPct.toFixed(0)}%</Text> : null}
+        </View>
       )}
 
       <View style={styles.inputContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.imageButton}>
           <Text style={styles.imageButtonText}>📷</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={sendImageFromUrl} style={[styles.imageButton, { marginLeft: 6 }]}>
-          <Text style={styles.imageButtonText}>🌐</Text>
         </TouchableOpacity>
 
         <TextInput
@@ -306,21 +255,10 @@ export default function ChatScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    paddingVertical: 12,
-    textAlign: "center",
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
+    fontSize: 18, fontWeight: "600", color: "#333", paddingVertical: 12,
+    textAlign: "center", backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#ddd",
   },
-  messageContainer: {
-    padding: 10,
-    borderRadius: 8,
-    marginVertical: 5,
-    maxWidth: "80%",
-  },
+  messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
   otherMessage: { backgroundColor: "#fff", alignSelf: "flex-start" },
   messageText: { fontSize: 16, marginBottom: 5 },
@@ -328,29 +266,25 @@ const styles = StyleSheet.create({
   senderName: { fontSize: 12, color: "#555", marginTop: 3 },
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
   inputContainer: {
-    flexDirection: "row",
-    padding: 10,
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    flexDirection: "row", padding: 10, alignItems: "center",
+    borderTopWidth: 1, borderColor: "#ddd", backgroundColor: "#fff",
   },
   input: {
-    flex: 1,
-    backgroundColor: "#f1f1f1",
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    marginHorizontal: 10,
-    fontSize: 16,
+    flex: 1, backgroundColor: "#f1f1f1", paddingVertical: 10, paddingHorizontal: 15,
+    borderRadius: 20, marginHorizontal: 10, fontSize: 16,
   },
-  sendButton: {
-    backgroundColor: "#28a745",
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-  },
+  sendButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20 },
   sendButtonText: { color: "#fff", fontWeight: "600" },
-  imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25 },
+  imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25, marginRight: 6 },
   imageButtonText: { fontSize: 18 },
+
+  // Link card
+  card: {
+    flexDirection: "row", backgroundColor: "#fff", borderRadius: 10,
+    borderWidth: 1, borderColor: "#eee", overflow: "hidden",
+  },
+  cardImage: { width: 80, height: 80 },
+  cardTitle: { fontWeight: "600", marginHorizontal: 10, marginTop: 8 },
+  cardDesc: { color: "#555", marginHorizontal: 10, marginTop: 2, fontSize: 12 },
+  cardUrl: { color: "#777", marginHorizontal: 10, marginVertical: 8, fontSize: 12 },
 });

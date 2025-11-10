@@ -10,6 +10,7 @@ import {
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
+// Παίρνουμε τα credentials από app.config.js › extra.firebase
 const fb = Constants.expoConfig?.extra?.firebase ?? {};
 
 const firebaseConfig = {
@@ -21,8 +22,10 @@ const firebaseConfig = {
   appId: fb.appId,
 };
 
+// Μία και μοναδική Firebase app
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
+// Auth με AsyncStorage persistence (RN)
 let auth;
 try {
   auth = initializeAuth(app, {
