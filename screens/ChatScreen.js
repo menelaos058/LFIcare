@@ -1,7 +1,6 @@
 // screens/ChatScreen.js
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
-
 import {
   addDoc,
   collection,
@@ -13,9 +12,8 @@ import {
 import {
   getDownloadURL,
   ref as storageRef,
-  uploadString,
+  uploadString, // ✅ χρησιμοποιούμε μόνο uploadString
 } from "firebase/storage";
-
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -35,6 +33,18 @@ import ParsedText from "react-native-parsed-text";
 import { auth, db, storage } from "../firebaseConfig";
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
+
+// Μικρός helper για data URLs με σωστό mime/extension
+function guessExtFromMime(mime) {
+  if (/png/i.test(mime)) return "png";
+  if (/webp/i.test(mime)) return "webp";
+  if (/gif/i.test(mime)) return "gif";
+  if (/heic|heif/i.test(mime)) return "heic";
+  return "jpg"; // default
+}
+function toDataUrl(base64, mime = "image/jpeg") {
+  return `data:${mime};base64,${base64}`;
+}
 
 export default function ChatScreen({ route }) {
   const { chatId, programTitle } = route?.params ?? {};
@@ -94,7 +104,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // === Pick & upload image (base64-only, no Blob) ===
+  // === Pick & upload image → μόνο data_url (καθόλου Blob/ArrayBuffer) ===
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -109,7 +119,7 @@ export default function ChatScreen({ route }) {
 
       const supportsNewEnum = !!ImagePicker?.MediaType;
       const options = {
-        base64: true,
+        base64: true,       // ✅ Χρειαζόμαστε base64
         quality: 0.7,
         ...(supportsNewEnum ? { mediaTypes: [ImagePicker.MediaType.Image] } : {}),
       };
@@ -121,19 +131,23 @@ export default function ChatScreen({ route }) {
 
       const asset = result.assets[0];
       const mime = asset.mimeType || "image/jpeg";
-      const fileName = `${Date.now()}.jpg`;
+      const ext = guessExtFromMime(mime);
+      const fileName = `${Date.now()}.${ext}`;
       const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
 
-      // ✅ Κύρια οδός: base64 από το picker
+      let dataUrl;
       if (asset.base64) {
-        await uploadString(imgRef, asset.base64, "base64", { contentType: mime });
+        // ✅ κύρια οδός: κατευθείαν data URL
+        dataUrl = toDataUrl(asset.base64, mime);
       } else {
-        // Fallback: διάβασε το file:// ως base64 (ασφαλές για Android/Hermes)
+        // Fallback: διάβασε το file:// ως base64 και φτιάξε data URL
         const base64 = await FileSystem.readAsStringAsync(asset.uri, {
           encoding: FileSystem.EncodingType.Base64,
         });
-        await uploadString(imgRef, base64, "base64", { contentType: mime });
+        dataUrl = toDataUrl(base64, mime);
       }
+
+      await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
 
       const url = await getDownloadURL(imgRef);
       await addDoc(collection(db, "chats", chatId, "messages"), {
@@ -149,7 +163,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // === Upload image from Internet URL (download → base64 → Storage) ===
+  // === Upload image from Internet URL (download → base64 → data_url → Storage) ===
   const sendImageFromUrl = async () => {
     const urlInput = (input || "").trim();
     if (!/^https?:\/\/\S+/i.test(urlInput)) {
@@ -165,24 +179,30 @@ export default function ChatScreen({ route }) {
       setLoading(true);
 
       // Κατέβασε προσωρινά την εικόνα
-      const fileName = `${Date.now()}.jpg`;
-      const localPath = `${FileSystem.cacheDirectory}${fileName}`;
+      const tmpName = `${Date.now()}`;
+      const localPath = `${FileSystem.cacheDirectory}${tmpName}`;
       const dl = await FileSystem.downloadAsync(urlInput, localPath);
 
-      // Μάντεψε mime
+      // Υπολόγισε mime από headers/extension
       let mime = "image/jpeg";
       const ct = dl?.headers?.["Content-Type"] || dl?.headers?.["content-type"];
-      if (typeof ct === "string" && ct.startsWith("image/")) mime = ct;
-      else if (/\.(png)$/i.test(urlInput)) mime = "image/png";
-      else if (/\.(webp)$/i.test(urlInput)) mime = "image/webp";
-      else if (/\.(gif)$/i.test(urlInput)) mime = "image/gif";
+      if (typeof ct === "string" && /^image\//i.test(ct)) mime = ct;
+      else if (/\.(png)(\?|#|$)/i.test(urlInput)) mime = "image/png";
+      else if (/\.(webp)(\?|#|$)/i.test(urlInput)) mime = "image/webp";
+      else if (/\.(gif)(\?|#|$)/i.test(urlInput)) mime = "image/gif";
 
-      // Διάβασε base64 και ανέβασε
+      const ext = guessExtFromMime(mime);
+      const fileName = `${tmpName}.${ext}`;
+
+      // Διάβασε base64 → data URL
       const base64 = await FileSystem.readAsStringAsync(localPath, {
         encoding: FileSystem.EncodingType.Base64,
       });
+      const dataUrl = toDataUrl(base64, mime);
+
+      // Ανέβασέ το
       const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
-      await uploadString(imgRef, base64, "base64", { contentType: mime });
+      await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
       const publicUrl = await getDownloadURL(imgRef);
 
       // Καθάρισμα cache (best effort)
