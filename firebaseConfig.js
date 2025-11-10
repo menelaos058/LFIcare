@@ -8,22 +8,21 @@ import {
   initializeAuth,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
-// Παίρνουμε τα credentials από app.config.js › extra.firebase
 const fb = Constants.expoConfig?.extra?.firebase ?? {};
 
 const firebaseConfig = {
   apiKey: fb.apiKey,
   authDomain: fb.authDomain,
   projectId: fb.projectId,
-  storageBucket: fb.storageBucket, // χρειάζεται για κανόνες/URL, όχι για web SDK
+  storageBucket: fb.storageBucket,
   messagingSenderId: fb.messagingSenderId,
   appId: fb.appId,
 };
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-// initializeAuth με AsyncStorage persistence (RN)
 let auth;
 try {
   auth = initializeAuth(app, {
@@ -34,7 +33,7 @@ try {
 }
 
 const db = getFirestore(app);
+const storage = getStorage(app);
 
-// ❗️Δεν εξάγουμε web storage εδώ
-export { app, auth, db };
+export { app, auth, db, storage };
 export default app;

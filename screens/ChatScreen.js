@@ -1,8 +1,6 @@
 // screens/ChatScreen.js
-import storageRN from "@react-native-firebase/storage";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
-
 import {
   addDoc,
   collection,
@@ -11,7 +9,11 @@ import {
   query,
   serverTimestamp,
 } from "firebase/firestore";
-
+import {
+  getDownloadURL,
+  ref as storageRef,
+  uploadString,
+} from "firebase/storage";
 import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -28,17 +30,19 @@ import {
   View,
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
-import { auth, db } from "../firebaseConfig"; // ❗️ΟΧΙ storage από εδώ
+import { auth, db, storage } from "../firebaseConfig";
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
-// helpers
 function guessExtFromMime(mime) {
   if (/png/i.test(mime)) return "png";
   if (/webp/i.test(mime)) return "webp";
   if (/gif/i.test(mime)) return "gif";
   if (/heic|heif/i.test(mime)) return "heic";
   return "jpg";
+}
+function toDataUrl(base64, mime = "image/jpeg") {
+  return `data:${mime};base64,${base64}`;
 }
 
 export default function ChatScreen({ route }) {
@@ -52,7 +56,6 @@ export default function ChatScreen({ route }) {
     [auth.currentUser?.email]
   );
 
-  // === Realtime messages ===
   useEffect(() => {
     if (!chatId) return;
     const q = query(
@@ -70,7 +73,6 @@ export default function ChatScreen({ route }) {
     return () => unsub();
   }, [chatId]);
 
-  // === Send text / link ===
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -88,11 +90,18 @@ export default function ChatScreen({ route }) {
       setInput("");
     } catch (error) {
       console.error("Message send failed:", error);
-      Alert.alert("Error", error?.message ?? "Failed to send message.");
+      if (error?.code === "permission-denied") {
+        Alert.alert(
+          "No permission",
+          "You do not have permission to write in this chat."
+        );
+      } else {
+        Alert.alert("Error", error?.message ?? "Failed to send message.");
+      }
     }
   };
 
-  // === Pick & upload image — base64 μόνο (native storage) ===
+  // === Pick from album → upload via data_url
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -121,19 +130,19 @@ export default function ChatScreen({ route }) {
       const mime = asset.mimeType || "image/jpeg";
       const ext = guessExtFromMime(mime);
       const fileName = `${Date.now()}.${ext}`;
-      const path = `chat-images/${chatId}/${fileName}`;
+      const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
 
-      // Πάρε base64 (από picker ή από file)
       const base64 =
         asset.base64 ??
         (await FileSystem.readAsStringAsync(asset.uri, {
           encoding: FileSystem.EncodingType.Base64,
         }));
 
-      // Native upload με putString(base64)
-      await storageRN().ref(path).putString(base64, "base64", { contentType: mime });
-      const url = await storageRN().ref(path).getDownloadURL();
+      const dataUrl = toDataUrl(base64, mime);
 
+      await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
+
+      const url = await getDownloadURL(imgRef);
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
         image: url,
@@ -147,7 +156,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // === Upload image από Internet URL (download → base64 → native storage) ===
+  // === Paste an internet image URL → download → data_url → upload
   const sendImageFromUrl = async () => {
     const urlInput = (input || "").trim();
     if (!/^https?:\/\/\S+/i.test(urlInput)) {
@@ -162,12 +171,10 @@ export default function ChatScreen({ route }) {
     try {
       setLoading(true);
 
-      // Κατέβασέ την προσωρινά
-      const tmpBase = `${Date.now()}`;
-      const localPath = `${FileSystem.cacheDirectory}${tmpBase}`;
+      const tmpName = `${Date.now()}`;
+      const localPath = `${FileSystem.cacheDirectory}${tmpName}`;
       const dl = await FileSystem.downloadAsync(urlInput, localPath);
 
-      // MIME
       let mime = "image/jpeg";
       const ct = dl?.headers?.["Content-Type"] || dl?.headers?.["content-type"];
       if (typeof ct === "string" && /^image\//i.test(ct)) mime = ct;
@@ -176,15 +183,16 @@ export default function ChatScreen({ route }) {
       else if (/\.(gif)(\?|#|$)/i.test(urlInput)) mime = "image/gif";
 
       const ext = guessExtFromMime(mime);
-      const fileName = `${tmpBase}.${ext}`;
-      const path = `chat-images/${chatId}/${fileName}`;
+      const fileName = `${tmpName}.${ext}`;
 
-      // Διάβασε base64 & ανέβασε
       const base64 = await FileSystem.readAsStringAsync(localPath, {
         encoding: FileSystem.EncodingType.Base64,
       });
-      await storageRN().ref(path).putString(base64, "base64", { contentType: mime });
-      const publicUrl = await storageRN().ref(path).getDownloadURL();
+      const dataUrl = toDataUrl(base64, mime);
+
+      const imgRef = storageRef(storage, `chat-images/${chatId}/${fileName}`);
+      await uploadString(imgRef, dataUrl, "data_url", { contentType: mime });
+      const publicUrl = await getDownloadURL(imgRef);
 
       try { await FileSystem.deleteAsync(localPath, { idempotent: true }); } catch {}
 
