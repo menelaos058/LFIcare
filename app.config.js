@@ -61,25 +61,25 @@ export default ({ config }) => ({
     eas: { projectId: process.env.EAS_PROJECT_ID }
   },
 
-  plugins: [
-    [
-      "expo-build-properties",
-      {
-        android: {
-          compileSdkVersion: 35,
-          targetSdkVersion: 35,
-          minSdkVersion: 24,
-          kotlinVersion: "1.9.25",
-          javaVersion: "17",
-          composeCompilerVersion: "1.5.15"
-        },
-        ios: {
-          deploymentTarget: "15.1"
-        }
-      }
-    ],
-    "expo-updates"
+ plugins: [
+  [
+    "expo-build-properties",
+    {
+      android: {
+        compileSdkVersion: 35,
+        targetSdkVersion: 35,
+        minSdkVersion: 24,
+        kotlinVersion: "1.9.25",
+        javaVersion: "17",
+      },
+      ios: {
+        deploymentTarget: "15.1",
+      },
+    },
   ],
+  "expo-updates",
+],
+
 
   assetBundlePatterns: ["**/*"]
 });
