@@ -1,15 +1,32 @@
 // screens/ChatScreen.js
 import * as ImagePicker from "expo-image-picker";
 import {
-  addDoc, collection, onSnapshot, orderBy, query, serverTimestamp,
+  addDoc,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
 } from "firebase/firestore";
 import {
-  getDownloadURL, ref as storageRef, uploadBytes,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
 } from "firebase/storage";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Linking,
-  Platform, StyleSheet, Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
 import { auth, db, storage } from "../firebaseConfig";
@@ -24,16 +41,23 @@ const guessExtFromMime = (mime) => {
   return "jpg";
 };
 
-// --- Optional: πολύ ελαφρύ og preview ---
+// --- Lightweight OG preview (best-effort) ---
 async function fetchOg(url) {
   try {
     const res = await fetch(url, { method: "GET", headers: { Accept: "text/html" } });
     const html = await res.text();
     const get = (prop) => {
-      const m = html.match(new RegExp(`<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i"));
+      const m = html.match(
+        new RegExp(
+          `<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`,
+          "i"
+        )
+      );
       return m?.[1];
     };
-    const title = get("og:title") || (html.match(/<title>([^<]+)<\\/title>/i)?.[1] ?? url);
+    const title =
+      get("og:title") ||
+      (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url); // ✅ σωστό regex (όχι <\\/title>)
     const desc = get("og:description") || "";
     const image = get("og:image") || null;
     return { title, desc, image };
@@ -48,15 +72,25 @@ function LinkPreviewCard({ url, onPress }) {
   useEffect(() => {
     mounted.current = true;
     fetchOg(url).then((d) => mounted.current && setData(d));
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, [url]);
   return (
     <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
       {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImage} /> : null}
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
-        {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
-        <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
+        <Text numberOfLines={1} style={styles.cardTitle}>
+          {data?.title || url}
+        </Text>
+        {!!data?.desc && (
+          <Text numberOfLines={2} style={styles.cardDesc}>
+            {data.desc}
+          </Text>
+        )}
+        <Text numberOfLines={1} style={styles.cardUrl}>
+          {url}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -69,14 +103,19 @@ export default function ChatScreen({ route }) {
   const [loading, setLoading] = useState(false);
 
   const myEmail = useMemo(
-    () => (auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null),
+    () =>
+      auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null,
     [auth.currentUser?.email]
   );
 
   useEffect(() => {
     if (!chatId) return;
-    const q = query(collection(db, "chats", chatId, "messages"), orderBy("timestamp", "asc"));
-    const unsub = onSnapshot(q,
+    const q = query(
+      collection(db, "chats", chatId, "messages"),
+      orderBy("timestamp", "asc")
+    );
+    const unsub = onSnapshot(
+      q,
       (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (err) => {
         console.error("Messages subscribe error:", err);
@@ -107,7 +146,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // ---- PICK & UPLOAD (Blob path) ----
+  // ---- PICK & UPLOAD (Blob path: fetch(file://...).blob() + uploadBytes) ----
   const pickImage = async () => {
     if (!chatId || !myEmail) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -120,10 +159,10 @@ export default function ChatScreen({ route }) {
         return;
       }
 
-      // Χωρίς deprecated MediaTypeOptions – αφήνουμε default (εικόνες)
+      // Αφήνουμε τα default mediaTypes (εικόνες). Δεν χρησιμοποιούμε deprecated MediaTypeOptions.
       const result = await ImagePicker.launchImageLibraryAsync({
         quality: 0.7,
-        base64: false, // ΔΕΝ θέλουμε base64 για να αποφύγουμε το ArrayBuffer path
+        base64: false, // <-- Απαραίτητο: αποφεύγουμε base64/data_url
       });
       if (result.canceled || !result.assets?.[0]) return;
 
@@ -137,9 +176,9 @@ export default function ChatScreen({ route }) {
       const fileName = `${Date.now()}.${ext}`;
       const path = `chat-images/${chatId}/${fileName}`;
 
-      // Παίρνουμε απευθείας Blob από το file:// URI
+      // Παίρνουμε Blob απ’ ευθείας από file://
       const res = await fetch(asset.uri);
-      const blob = await res.blob(); // <-- αυτό δουλεύει σε Expo/RN
+      const blob = await res.blob();
 
       const ref = storageRef(storage, path);
       await uploadBytes(ref, blob, { contentType: mime });
@@ -160,9 +199,12 @@ export default function ChatScreen({ route }) {
 
   const onPressLink = async (url) => {
     try {
-      const clean = (url ?? "").toString().trim().replace(/[)\\].,]+$/g, "");
+      const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
       if (!clean) return;
-      if (/^https?:\\/\\//i.test(clean)) { await Linking.openURL(clean); return; }
+      if (/^https?:\/\//i.test(clean)) {
+        await Linking.openURL(clean);
+        return;
+      }
       const ok = await Linking.canOpenURL(clean);
       if (ok) await Linking.openURL(clean);
       else Alert.alert("Cannot open link", clean);
@@ -173,12 +215,18 @@ export default function ChatScreen({ route }) {
   };
 
   const renderMessage = ({ item }) => {
-    const isMine = myEmail && typeof item.senderEmail === "string"
-      ? item.senderEmail.toLowerCase() === myEmail
-      : false;
+    const isMine =
+      myEmail && typeof item.senderEmail === "string"
+        ? item.senderEmail.toLowerCase() === myEmail
+        : false;
 
     return (
-      <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
+      <View
+        style={[
+          styles.messageContainer,
+          isMine ? styles.myMessage : styles.otherMessage,
+        ]}
+      >
         {item.text ? (
           <ParsedText
             style={styles.messageText}
@@ -195,14 +243,19 @@ export default function ChatScreen({ route }) {
           </View>
         ) : null}
 
-        {item.image ? <Image source={{ uri: item.image }} style={styles.image} /> : null}
+        {item.image ? (
+          <Image source={{ uri: item.image }} style={styles.image} />
+        ) : null}
         <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
       </View>
     );
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <Text style={styles.headerTitle}>{programTitle || "Chat"}</Text>
 
       <FlatList
@@ -244,8 +297,14 @@ export default function ChatScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   headerTitle: {
-    fontSize: 18, fontWeight: "600", color: "#333", paddingVertical: 12,
-    textAlign: "center", backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#ddd",
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    paddingVertical: 12,
+    textAlign: "center",
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
   },
   messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
@@ -255,22 +314,40 @@ const styles = StyleSheet.create({
   senderName: { fontSize: 12, color: "#555", marginTop: 3 },
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
   inputContainer: {
-    flexDirection: "row", padding: 10, alignItems: "center",
-    borderTopWidth: 1, borderColor: "#ddd", backgroundColor: "#fff",
+    flexDirection: "row",
+    padding: 10,
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
   input: {
-    flex: 1, backgroundColor: "#f1f1f1", paddingVertical: 10, paddingHorizontal: 15,
-    borderRadius: 20, marginHorizontal: 10, fontSize: 16,
+    flex: 1,
+    backgroundColor: "#f1f1f1",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginHorizontal: 10,
+    fontSize: 16,
   },
-  sendButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20 },
+  sendButton: {
+    backgroundColor: "#28a745",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+  },
   sendButtonText: { color: "#fff", fontWeight: "600" },
   imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25, marginRight: 6 },
   imageButtonText: { fontSize: 18 },
 
   // Link card
   card: {
-    flexDirection: "row", backgroundColor: "#fff", borderRadius: 10,
-    borderWidth: 1, borderColor: "#eee", overflow: "hidden",
+    flexDirection: "row",
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#eee",
+    overflow: "hidden",
   },
   cardImage: { width: 80, height: 80 },
   cardTitle: { fontWeight: "600", marginHorizontal: 10, marginTop: 8 },
