@@ -82,7 +82,7 @@ export default ({ config }) => ({
         }
       }
     ],
-    
+    "@react-native-firebase/app",
     "expo-updates"
   ],
 
