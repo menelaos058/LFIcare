@@ -1,12 +1,11 @@
 // App.js
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, View } from "react-native";
-import 'react-native-gesture-handler';
-
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
+import 'react-native-gesture-handler';
 import { auth, db } from "./firebaseConfig";
 
 // Screens
@@ -19,6 +18,7 @@ import MyProgramsScreen from "./screens/MyProgramsScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import ProgramsScreen from "./screens/ProgramsScreen";
 import RegisterScreen from "./screens/RegisterScreen";
+import ShareSheetScreen from "./screens/ShareSheetScreen";
 import TeachersScreen from "./screens/TeachersScreen";
 
 // Components
@@ -26,15 +26,33 @@ import Header from "./components/Header";
 
 const Stack = createNativeStackNavigator();
 
+// ❗ Lazy, safe import για ShareMenu
+let ShareMenu = null;
+if (Platform.OS === 'android' || Platform.OS === 'ios') {
+  try {
+    // ορισμένες εκδόσεις κάνουν default export, άλλες όχι
+    const mod = require('react-native-share-menu');
+    ShareMenu = mod?.default ?? mod;
+  } catch (e) {
+    // μένει null -> θα αγνοήσουμε τα share intents
+  }
+}
+
 export default function App() {
+  const navRef = useNavigationContainerRef();
+
   const [currentUser, setCurrentUser] = useState(null); // { uid, email, role }
   const [loading, setLoading] = useState(true);
+  const [navReady, setNavReady] = useState(false);
 
+  // incoming share buffer μέχρι να είναι έτοιμο το navigation
+  const [pendingShare, setPendingShare] = useState(null); // { mimeType, data, items? }
+
+  // ====== Auth + live role από /users/{uid} ======
   useEffect(() => {
     let unsubscribeUserDoc = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      // Καθάρισε προηγούμενο listener στο user doc (αν υπήρχε)
       if (unsubscribeUserDoc) {
         unsubscribeUserDoc();
         unsubscribeUserDoc = null;
@@ -46,7 +64,6 @@ export default function App() {
         return;
       }
 
-      // Ζωντανός συγχρονισμός ρόλου από /users/{uid}
       const userRef = doc(db, "users", user.uid);
       unsubscribeUserDoc = onSnapshot(
         userRef,
@@ -62,7 +79,6 @@ export default function App() {
         },
         (err) => {
           console.log("onSnapshot(users/uid) error:", err);
-          // Σε σφάλμα, κράτα default ρόλο ώστε να μη μπλοκάρει το UI
           setCurrentUser({
             uid: user.uid,
             email: user.email ?? null,
@@ -79,6 +95,61 @@ export default function App() {
     };
   }, []);
 
+  // ====== Share intents (μόνο αν υπάρχει το native module) ======
+  useEffect(() => {
+    // αν το module λείπει, δεν στήνουμε listeners
+    if (!ShareMenu) return;
+    const hasInitial = typeof ShareMenu.getInitialShare === 'function';
+    const hasListener = typeof ShareMenu.addNewShareListener === 'function';
+    if (!hasInitial && !hasListener) return;
+
+    // 1) Share όταν άνοιξε η app
+    if (hasInitial) {
+      try {
+        ShareMenu.getInitialShare((item) => {
+          if (item) setPendingShare(item);
+        });
+      } catch (e) {
+        console.warn("ShareMenu.getInitialShare failed:", e?.message);
+      }
+    }
+
+    // 2) Νέα shares όσο τρέχει η app
+    let listenerCleanup = null;
+    if (hasListener) {
+      try {
+        const listener = ShareMenu.addNewShareListener((item) => {
+          if (item) setPendingShare(item);
+        });
+        listenerCleanup = () => {
+          try { listener?.remove?.(); } catch {}
+        };
+      } catch (e) {
+        console.warn("ShareMenu.addNewShareListener failed:", e?.message);
+      }
+    }
+
+    return () => {
+      if (listenerCleanup) listenerCleanup();
+    };
+  }, []);
+
+  // ====== Όταν είναι έτοιμο το navigation + υπάρχει pendingShare => πλοήγηση ======
+  useEffect(() => {
+    if (!navReady || !pendingShare) return;
+
+    if (!currentUser) {
+      navRef.navigate("Login", {
+        redirect: { name: "ShareSheet", params: { shared: pendingShare } },
+      });
+      setPendingShare(null);
+      return;
+    }
+
+    navRef.navigate("ShareSheet", { shared: pendingShare });
+    setPendingShare(null);
+  }, [navReady, pendingShare, currentUser, navRef]);
+
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -88,7 +159,7 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navRef} onReady={() => setNavReady(true)}>
       <Header user={currentUser} setUser={setCurrentUser} />
 
       <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -124,10 +195,15 @@ export default function App() {
           {(props) => <ChatScreen {...props} user={currentUser} />}
         </Stack.Screen>
 
-        {/* Εμφάνιση Admin screen μόνο για role === 'admin' */}
         {currentUser?.role === "admin" && (
           <Stack.Screen name="Admin" component={AdminScreen} />
         )}
+
+        <Stack.Screen
+          name="ShareSheet"
+          component={ShareSheetScreen}
+          options={{ headerShown: true, title: "Κοινοποίηση" }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

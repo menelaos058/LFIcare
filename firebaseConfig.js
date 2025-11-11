@@ -46,5 +46,5 @@ try {
 const db = getFirestore(app);
 const storage = getStorage(app);
 const functions = getFunctions(app); // optionally: getFunctions(app, "us-central1")
-export { app, app, auth, auth, db, db, functions, storage, storage };
-export default app;
+export { app, auth, db, functions, storage };
+

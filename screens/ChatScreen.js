@@ -27,7 +27,7 @@ import {
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
 import ShareMenu from "react-native-share-menu";
-import { auth, db, functions, storage } from "../firebaseConfig"; // <- πρέπει να υπάρχει το functions
+import { auth, db, functions, storage } from "../firebaseConfig";
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
@@ -61,8 +61,7 @@ async function fetchOg(url) {
       );
       return m?.[1];
     };
-    const title =
-      get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
+    const title = get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
     const desc = get("og:description") || "";
     const image = get("og:image") || null;
     return { title, desc, image };
@@ -117,22 +116,101 @@ async function getSignedUrlFor(storagePath) {
   return data?.url; // signed URL
 }
 
+/** Διαχείριση incoming share (text / image / video / generic file / multiple) */
+async function handleIncomingShare({ chatId, myEmail, item, uid }) {
+  if (!chatId || !myEmail || !item || !uid) return;
+
+  // 1) Text (text/plain)
+  if (item.mimeType?.startsWith("text/")) {
+    const text = (item.data || "").trim();
+    if (!text) return;
+    const payload = EXACT_URL_REGEX.test(text) ? { link: text } : { text };
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      ...payload,
+      timestamp: serverTimestamp(),
+    });
+    return;
+  }
+
+  // 2) Image
+  if (item.mimeType?.startsWith("image/") && item.data) {
+    const uri = item.data;
+    const mime = item.mimeType || "image/jpeg";
+    const ext = guessExtFromMime(mime);
+    const fileId = `${Date.now()}.${ext}`;
+    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+    await uploadUriToStorage({ uri, mime, storagePath });
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      media: { type: "image", storagePath, name: fileId, mime },
+      timestamp: serverTimestamp(),
+    });
+    return;
+  }
+
+  // 3) Video
+  if (item.mimeType?.startsWith("video/") && item.data) {
+    const uri = item.data;
+    const mime = item.mimeType || "video/mp4";
+    const ext = guessExtFromMime(mime);
+    const fileId = `${Date.now()}.${ext}`;
+    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+    await uploadUriToStorage({ uri, mime, storagePath });
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      media: { type: "video", storagePath, name: fileId, mime },
+      timestamp: serverTimestamp(),
+    });
+    return;
+  }
+
+  // 4) Multiple items (Android SEND_MULTIPLE)
+  if (Array.isArray(item.items) && item.items.length) {
+    for (const sub of item.items) {
+      await handleIncomingShare({ chatId, myEmail, item: sub, uid });
+    }
+    return;
+  }
+
+  // 5) Generic file (*/*)
+  if (item.data) {
+    const uri = item.data;
+    const mime = item.mimeType || "application/octet-stream";
+    const ext = guessExtFromMime(mime);
+    const fileId = `${Date.now()}.${ext}`;
+    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+    await uploadUriToStorage({ uri, mime, storagePath });
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      media: { type: "file", storagePath, name: fileId, mime },
+      timestamp: serverTimestamp(),
+    });
+  }
+}
+
 /** Μικρό memoized cache για signed URLs (ανά storagePath) */
 const useSignedUrlCache = () => {
   const [cache, setCache] = useState({}); // { storagePath: signedUrl }
 
-  const fetchAndCache = useCallback(async (storagePath) => {
-    if (!storagePath) return null;
-    if (cache[storagePath]) return cache[storagePath];
-    const url = await getSignedUrlFor(storagePath);
-    setCache((m) => ({ ...m, [storagePath]: url }));
-    return url;
-  }, [cache]);
+  const fetchAndCache = useCallback(
+    async (storagePath) => {
+      if (!storagePath) return null;
+      if (cache[storagePath]) return cache[storagePath];
+      const url = await getSignedUrlFor(storagePath);
+      setCache((m) => ({ ...m, [storagePath]: url }));
+      return url;
+    },
+    [cache]
+  );
 
   return { cache, fetchAndCache, setCache };
 };
 
-/** Child component για **κάθε μήνυμα** — εδώ επιτρέπεται να χρησιμοποιούμε hooks */
+/** Child component για κάθε μήνυμα — εδώ επιτρέπεται να χρησιμοποιούμε hooks */
 function MessageItem({ item, myEmail, onPressLink, openUrl, fetchSigned }) {
   const isMine =
     myEmail && typeof item.senderEmail === "string"
@@ -153,11 +231,12 @@ function MessageItem({ item, myEmail, onPressLink, openUrl, fetchSigned }) {
           setSigned(null);
         }
       } catch (e) {
-        // αν αποτύχει, απλά δεν δείχνουμε media
         console.warn("Signed URL error:", e?.message);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [item?.media?.storagePath, fetchSigned]);
 
   return (
@@ -235,8 +314,16 @@ export default function ChatScreen({ route }) {
     return () => unsub();
   }, [chatId]);
 
-  // Share intents / extensions
+  // Share intents / extensions (Android-only & module-guarded)
   useEffect(() => {
+    const hasModule =
+      Platform.OS === "android" &&
+      ShareMenu &&
+      typeof ShareMenu.getInitialShare === "function" &&
+      typeof ShareMenu.addNewShareListener === "function";
+
+    if (!hasModule) return;
+
     const run = (item) => {
       if (!item) return;
       if (!chatId || !myEmail || !uid) return;
@@ -249,10 +336,20 @@ export default function ChatScreen({ route }) {
         .finally(() => setLoading(false));
     };
 
-    ShareMenu.getInitialShare(run);
+    try {
+      const maybePromise = ShareMenu.getInitialShare(run);
+      if (maybePromise && typeof maybePromise.then === "function") {
+        maybePromise.then(run).catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+
     const listener = ShareMenu.addNewShareListener(run);
     return () => {
-      try { listener?.remove?.(); } catch {}
+      try {
+        listener?.remove?.();
+      } catch {}
     };
   }, [chatId, myEmail, uid]);
 
@@ -383,8 +480,11 @@ export default function ChatScreen({ route }) {
   };
 
   const openUrl = async (url) => {
-    try { await Linking.openURL(url); }
-    catch { Alert.alert("Cannot open", url); }
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Cannot open", url);
+    }
   };
 
   return (
@@ -442,8 +542,14 @@ export default function ChatScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   headerTitle: {
-    fontSize: 18, fontWeight: "600", color: "#333", paddingVertical: 12,
-    textAlign: "center", backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#ddd",
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    paddingVertical: 12,
+    textAlign: "center",
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderColor: "#ddd",
   },
   messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
@@ -454,22 +560,41 @@ const styles = StyleSheet.create({
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
 
   inputContainer: {
-    flexDirection: "row", padding: 10, alignItems: "center",
-    borderTopWidth: 1, borderColor: "#ddd", backgroundColor: "#fff",
+    flexDirection: "row",
+    padding: 10,
+    alignItems: "center",
+    borderTopWidth: 1,
+    borderColor: "#ddd",
+    backgroundColor: "#fff",
   },
   input: {
-    flex: 1, backgroundColor: "#f1f1f1", paddingVertical: 10, paddingHorizontal: 15,
-    borderRadius: 20, marginHorizontal: 10, fontSize: 16,
+    flex: 1,
+    backgroundColor: "#f1f1f1",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    marginHorizontal: 10,
+    fontSize: 16,
   },
-  sendButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20 },
+  sendButton: {
+    backgroundColor: "#28a745",
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+  },
   sendButtonText: { color: "#fff", fontWeight: "600" },
   imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25 },
   imageButtonText: { fontSize: 18 },
 
   // Link card
   card: {
-    flexDirection: "row", backgroundColor: "#fff", borderRadius: 10,
-    borderWidth: 1, borderColor: "#eee", overflow: "hidden", maxWidth: 280,
+    flexDirection: "row",
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#eee",
+    overflow: "hidden",
+    maxWidth: 280,
   },
   cardImage: { width: 80, height: 80 },
   cardTitle: { fontWeight: "600", marginHorizontal: 10, marginTop: 8 },
@@ -478,8 +603,13 @@ const styles = StyleSheet.create({
 
   // file/video card
   fileCard: {
-    backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#eee",
-    padding: 10, marginBottom: 6, maxWidth: 280,
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#eee",
+    padding: 10,
+    marginBottom: 6,
+    maxWidth: 280,
   },
   fileTitle: { fontWeight: "600", marginBottom: 4 },
   fileUrl: { fontSize: 12, color: "#777" },

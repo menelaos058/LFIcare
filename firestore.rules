@@ -1,0 +1,203 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* =============== Helpers =============== */
+    function isSignedIn() { return request.auth != null; }
+    function hasEmail() { return isSignedIn() && (request.auth.token.email is string); }
+    function myEmail() { return request.auth.token.email; }
+
+    function userDoc(uid) { return get(/databases/$(database)/documents/users/$(uid)); }
+    function userExists(uid) { return exists(/databases/$(database)/documents/users/$(uid)); }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+
+    function isAdmin() {
+      return isSignedIn() && userExists(request.auth.uid)
+        && userDoc(request.auth.uid).data.role == 'admin';
+    }
+    function isTeacher() {
+      return isSignedIn() && userExists(request.auth.uid)
+        && userDoc(request.auth.uid).data.role == 'teacher';
+    }
+
+    function onlyFields(data, allowed) { return data.keys().hasOnly(allowed); }
+    function hasAllFields(data, required) { return data.keys().hasAll(required); }
+
+    function validString(s, minLen, maxLen) {
+      return s is string && (s.size() >= minLen) && (s.size() <= maxLen);
+    }
+    function validPrice(n) { return n is number && n >= 0 && n <= 100000; }
+    function validEmail(e) { return e is string && e.size() > 3 && e.size() <= 254; }
+
+    function fieldUnchanged(field) {
+      return !(field in request.resource.data)
+             || request.resource.data[field] == resource.data[field];
+    }
+
+    // serverTimestamp -> request.time
+    function isNow(field) {
+      return field in request.resource.data && request.resource.data[field] == request.time;
+    }
+
+    /* =============== USERS =============== */
+    match /users/{userId} {
+
+      allow create: if isSignedIn()
+        && request.auth.uid == userId
+        && hasEmail()
+        && hasAllFields(request.resource.data, ['email','createdAt'])
+        && onlyFields(request.resource.data, ['name','email','phone','role','createdAt'])
+        && validEmail(request.resource.data.email)
+        && isNow('createdAt')
+        && ( !('role' in request.resource.data) || request.resource.data.role == 'user' );
+
+      allow read: if isOwner(userId) || isAdmin();
+
+      allow update: if (
+        isOwner(userId)
+        && onlyFields(request.resource.data, ['name','email','phone','role','createdAt','updatedAt'])
+        && fieldUnchanged('role')
+        && fieldUnchanged('createdAt')
+        && (!('name' in request.resource.data) || validString(request.resource.data.name, 0, 120))
+        && (!('email' in request.resource.data) || validEmail(request.resource.data.email))
+        && (!('phone' in request.resource.data) || validString(request.resource.data.phone, 0, 32))
+        && ( !('updatedAt' in request.resource.data) || isNow('updatedAt') )
+      ) || isAdmin();
+
+      allow delete: if isOwner(userId) || isAdmin();
+
+      match /purchases/{purchaseId} {
+        allow read, delete: if isOwner(userId);
+
+        allow create: if isOwner(userId)
+          && request.resource.id == request.resource.data.programId
+          && !exists(/databases/$(database)/documents/users/$(userId)/purchases/$(request.resource.id))
+          && hasAllFields(request.resource.data, [
+              'programId','programTitle','teacherEmail','price','createdAt'
+            ])
+          && onlyFields(request.resource.data, [
+              'programId','programTitle','teacherEmail','price','createdAt','description'
+            ])
+          && validString(request.resource.data.programId, 1, 200)
+          && validString(request.resource.data.programTitle, 1, 200)
+          && validEmail(request.resource.data.teacherEmail)
+          && validPrice(request.resource.data.price)
+          && ( !('description' in request.resource.data) || validString(request.resource.data.description, 0, 2000) )
+          && isNow('createdAt')
+          && exists(/databases/$(database)/documents/programs/$(request.resource.data.programId));
+
+        allow update: if false;
+      }
+    }
+
+    /* =============== PROGRAMS =============== */
+    match /programs/{programId} {
+      allow read: if true;
+
+      allow create: if isAdmin()
+        && hasAllFields(request.resource.data, ['title','description','price','teacherEmail'])
+        && onlyFields(request.resource.data, ['title','description','price','teacherEmail'])
+        && validString(request.resource.data.title, 1, 120)
+        && validString(request.resource.data.description, 0, 5000)
+        && validPrice(request.resource.data.price)
+        && validEmail(request.resource.data.teacherEmail);
+
+      allow update: if isAdmin()
+        && onlyFields(request.resource.data, ['title','description','price','teacherEmail'])
+        && ( !('title' in request.resource.data) || validString(request.resource.data.title, 1, 120) )
+        && ( !('description' in request.resource.data) || validString(request.resource.data.description, 0, 5000) )
+        && ( !('price' in request.resource.data) || validPrice(request.resource.data.price) )
+        && ( !('teacherEmail' in request.resource.data) || validEmail(request.resource.data.teacherEmail) );
+
+      allow delete: if isAdmin();
+    }
+
+    /* =============== TEACHERS =============== */
+    match /teachers/{teacherId} {
+      allow read: if true;
+
+      allow create: if isAdmin()
+        && hasAllFields(request.resource.data, ['name','email','phone','description'])
+        && onlyFields(request.resource.data, ['name','email','phone','description'])
+        && validString(request.resource.data.name, 1, 120)
+        && validEmail(request.resource.data.email)
+        && validString(request.resource.data.phone, 0, 32)
+        && validString(request.resource.data.description, 0, 5000);
+
+      allow update: if isAdmin()
+        && onlyFields(request.resource.data, ['name','email','phone','description'])
+        && ( !('name' in request.resource.data) || validString(request.resource.data.name, 1, 120) )
+        && ( !('email' in request.resource.data) || validEmail(request.resource.data.email) )
+        && ( !('phone' in request.resource.data) || validString(request.resource.data.phone, 0, 32) )
+        && ( !('description' in request.resource.data) || validString(request.resource.data.description, 0, 5000) );
+
+      allow delete: if isAdmin();
+    }
+
+    /* =============== CHATS =============== */
+    match /chats/{chatId} {
+
+      // Δημιουργία chat
+      allow create: if hasEmail()
+        && (request.resource.data.users is list)
+        && request.resource.data.users.size() >= 2
+        && request.resource.data.users.hasAll([myEmail()])
+        && hasAllFields(request.resource.data, ['users','programId','programTitle','lastMessage','createdAt'])
+        && onlyFields(request.resource.data, ['users','programId','programTitle','lastMessage','createdAt'])
+        && validString(request.resource.data.programId, 1, 200)
+        && validString(request.resource.data.programTitle, 1, 200)
+        && (request.resource.data.lastMessage is string)
+        && isNow('createdAt')
+        && exists(/databases/$(database)/documents/programs/$(request.resource.data.programId));
+
+      // Read/Delete: μόνο συμμετέχοντες
+      allow read, delete: if hasEmail()
+        && (myEmail() in resource.data.users);
+
+      // Update: μόνο συμμετέχοντες, immutable κάποια πεδία
+      allow update: if hasEmail()
+        && (myEmail() in resource.data.users)
+        && fieldUnchanged('users')
+        && fieldUnchanged('programId')
+        && fieldUnchanged('programTitle')
+        && fieldUnchanged('createdAt')
+        && onlyFields(request.resource.data, ['users','programId','programTitle','createdAt','lastMessage','updatedAt'])
+        && ( !('lastMessage' in request.resource.data) || validString(request.resource.data.lastMessage, 0, 2000) )
+        && ( !('updatedAt' in request.resource.data) || isNow('updatedAt') );
+
+      /* ---- Messages subcollection ---- */
+      match /messages/{messageId} {
+        allow create: if hasEmail()
+          && (myEmail() in get(/databases/$(database)/documents/chats/$(chatId)).data.users)
+          && hasAllFields(request.resource.data, ['senderEmail','timestamp'])
+          && onlyFields(request.resource.data, ['senderEmail','text','link','media','timestamp'])
+          && request.resource.data.senderEmail == myEmail()
+          && request.resource.data.timestamp == request.time
+          && (
+               (('text' in request.resource.data) && validString(request.resource.data.text, 1, 4000))
+            || (('link' in request.resource.data)
+                 && validString(request.resource.data.link, 5, 2000)
+                 && request.resource.data.link.matches('^https?://.*'))
+            || (('media' in request.resource.data)
+                 && (request.resource.data.media is map)
+                 && request.resource.data.media.keys().hasAll(['type','storagePath','name','mime'])
+                 && request.resource.data.media.type in ['image','video','file']
+                 && validString(request.resource.data.media.storagePath, 10, 500)
+                 && request.resource.data.media.storagePath.matches('^chat-media/'+chatId+'.*')
+                 && validString(request.resource.data.media.name, 1, 200)
+                 && validString(request.resource.data.media.mime, 1, 200))
+          );
+
+        allow read: if hasEmail()
+          && (myEmail() in get(/databases/$(database)/documents/chats/$(chatId)).data.users);
+
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+
+    /* Default deny */
+    match /{document=**} { allow read, write: if false; }
+  }
+}
