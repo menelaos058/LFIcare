@@ -9,11 +9,8 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import {
-  ref as storageRef,
-  uploadBytes
-} from "firebase/storage";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ref as storageRef, uploadBytes } from "firebase/storage";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -30,7 +27,7 @@ import {
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
 import ShareMenu from "react-native-share-menu";
-import { auth, db, functions, storage } from "../firebaseConfig"; // <- ΠΡΟΣΟΧΗ: θέλουμε και functions
+import { auth, db, functions, storage } from "../firebaseConfig"; // <- πρέπει να υπάρχει το functions
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
@@ -64,7 +61,8 @@ async function fetchOg(url) {
       );
       return m?.[1];
     };
-    const title = get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
+    const title =
+      get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
     const desc = get("og:description") || "";
     const image = get("og:image") || null;
     return { title, desc, image };
@@ -79,15 +77,25 @@ function LinkPreviewCard({ url, onPress }) {
   useEffect(() => {
     mounted.current = true;
     fetchOg(url).then((d) => mounted.current && setData(d));
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, [url]);
   return (
     <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
       {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImage} /> : null}
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
-        {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
-        <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
+        <Text numberOfLines={1} style={styles.cardTitle}>
+          {data?.title || url}
+        </Text>
+        {!!data?.desc && (
+          <Text numberOfLines={2} style={styles.cardDesc}>
+            {data.desc}
+          </Text>
+        )}
+        <Text numberOfLines={1} style={styles.cardUrl}>
+          {url}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -109,80 +117,88 @@ async function getSignedUrlFor(storagePath) {
   return data?.url; // signed URL
 }
 
-/** Διαχείριση incoming share (text / image / video / generic file / multiple) */
-async function handleIncomingShare({ chatId, myEmail, item, uid }) {
-  if (!chatId || !myEmail || !item || !uid) return;
+/** Μικρό memoized cache για signed URLs (ανά storagePath) */
+const useSignedUrlCache = () => {
+  const [cache, setCache] = useState({}); // { storagePath: signedUrl }
 
-  // 1) Text (text/plain)
-  if (item.mimeType?.startsWith("text/")) {
-    const text = (item.data || "").trim();
-    if (!text) return;
-    const payload = EXACT_URL_REGEX.test(text) ? { link: text } : { text };
-    await addDoc(collection(db, "chats", chatId, "messages"), {
-      senderEmail: myEmail,
-      ...payload,
-      timestamp: serverTimestamp(),
-    });
-    return;
-  }
+  const fetchAndCache = useCallback(async (storagePath) => {
+    if (!storagePath) return null;
+    if (cache[storagePath]) return cache[storagePath];
+    const url = await getSignedUrlFor(storagePath);
+    setCache((m) => ({ ...m, [storagePath]: url }));
+    return url;
+  }, [cache]);
 
-  // 2) Image
-  if (item.mimeType?.startsWith("image/") && item.data) {
-    const uri = item.data;
-    const mime = item.mimeType || "image/jpeg";
-    const ext = guessExtFromMime(mime);
-    const fileId = `${Date.now()}.${ext}`;
-    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+  return { cache, fetchAndCache, setCache };
+};
 
-    await uploadUriToStorage({ uri, mime, storagePath });
-    await addDoc(collection(db, "chats", chatId, "messages"), {
-      senderEmail: myEmail,
-      media: { type: "image", storagePath, name: fileId, mime },
-      timestamp: serverTimestamp(),
-    });
-    return;
-  }
+/** Child component για **κάθε μήνυμα** — εδώ επιτρέπεται να χρησιμοποιούμε hooks */
+function MessageItem({ item, myEmail, onPressLink, openUrl, fetchSigned }) {
+  const isMine =
+    myEmail && typeof item.senderEmail === "string"
+      ? item.senderEmail.toLowerCase() === myEmail
+      : false;
 
-  // 3) Video
-  if (item.mimeType?.startsWith("video/") && item.data) {
-    const uri = item.data;
-    const mime = item.mimeType || "video/mp4";
-    const ext = guessExtFromMime(mime);
-    const fileId = `${Date.now()}.${ext}`;
-    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+  const [signed, setSigned] = useState(null);
 
-    await uploadUriToStorage({ uri, mime, storagePath });
-    await addDoc(collection(db, "chats", chatId, "messages"), {
-      senderEmail: myEmail,
-      media: { type: "video", storagePath, name: fileId, mime },
-      timestamp: serverTimestamp(),
-    });
-    return;
-  }
+  // Φέρε signed URL όταν έχει media
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (item?.media?.storagePath) {
+          const url = await fetchSigned(item.media.storagePath);
+          if (alive) setSigned(url);
+        } else {
+          setSigned(null);
+        }
+      } catch (e) {
+        // αν αποτύχει, απλά δεν δείχνουμε media
+        console.warn("Signed URL error:", e?.message);
+      }
+    })();
+    return () => { alive = false; };
+  }, [item?.media?.storagePath, fetchSigned]);
 
-  // 4) Multiple items (Android SEND_MULTIPLE)
-  if (Array.isArray(item.items) && item.items.length) {
-    for (const sub of item.items) {
-      await handleIncomingShare({ chatId, myEmail, item: sub, uid });
-    }
-    return;
-  }
+  return (
+    <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
+      {item.text ? (
+        <ParsedText
+          style={styles.messageText}
+          parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
+          selectable
+        >
+          {item.text}
+        </ParsedText>
+      ) : null}
 
-  // 5) Generic file (*/*)
-  if (item.data) {
-    const uri = item.data;
-    const mime = item.mimeType || "application/octet-stream";
-    const ext = guessExtFromMime(mime);
-    const fileId = `${Date.now()}.${ext}`;
-    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+      {item.link ? (
+        <View style={{ marginBottom: 6, maxWidth: 280 }}>
+          <LinkPreviewCard url={item.link} onPress={onPressLink} />
+        </View>
+      ) : null}
 
-    await uploadUriToStorage({ uri, mime, storagePath });
-    await addDoc(collection(db, "chats", chatId, "messages"), {
-      senderEmail: myEmail,
-      media: { type: "file", storagePath, name: fileId, mime },
-      timestamp: serverTimestamp(),
-    });
-  }
+      {item.media?.type === "image" && signed ? (
+        <Image source={{ uri: signed }} style={styles.image} />
+      ) : null}
+
+      {item.media?.type === "video" && signed ? (
+        <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+          <Text style={styles.fileTitle}>🎬 Open video</Text>
+          <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {item.media?.type === "file" && signed ? (
+        <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+          <Text style={styles.fileTitle}>📎 {item.media.name || "Open file"}</Text>
+          <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
+    </View>
+  );
 }
 
 export default function ChatScreen({ route }) {
@@ -190,7 +206,6 @@ export default function ChatScreen({ route }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [signedUrlCache, setSignedUrlCache] = useState({}); // { storagePath: url }
 
   const currentUser = auth.currentUser;
   const myEmail = useMemo(
@@ -198,6 +213,9 @@ export default function ChatScreen({ route }) {
     [currentUser?.email]
   );
   const uid = currentUser?.uid || null;
+
+  // μικρό cache για signed URLs
+  const { fetchAndCache } = useSignedUrlCache();
 
   // subscribe to messages
   useEffect(() => {
@@ -364,85 +382,9 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // cache signed URL per storagePath (λήγει — μπορείς να το ξαναζητήσεις με long-press)
-  const useSignedUrl = (storagePath) => {
-    const [url, setUrl] = useState(signedUrlCache[storagePath]);
-    useEffect(() => {
-      let alive = true;
-      (async () => {
-        try {
-          if (!storagePath) return;
-          const signed = await getSignedUrlFor(storagePath);
-          if (alive) {
-            setUrl(signed);
-            setSignedUrlCache((m) => ({ ...m, [storagePath]: signed }));
-          }
-        } catch (e) {
-          console.warn("Signed URL error:", e?.message);
-        }
-      })();
-      return () => { alive = false; };
-    }, [storagePath]);
-    return url;
-  };
-
   const openUrl = async (url) => {
     try { await Linking.openURL(url); }
     catch { Alert.alert("Cannot open", url); }
-  };
-
-  const renderMessage = ({ item }) => {
-    const isMine =
-      myEmail && typeof item.senderEmail === "string"
-        ? item.senderEmail.toLowerCase() === myEmail
-        : false;
-
-    // media rendering
-    let mediaNode = null;
-    if (item.media?.storagePath && item.media?.type) {
-      const signed = useSignedUrl(item.media.storagePath);
-      if (item.media.type === "image" && signed) {
-        mediaNode = <Image source={{ uri: signed }} style={styles.image} />;
-      } else if (item.media.type === "video" && signed) {
-        mediaNode = (
-          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
-            <Text style={styles.fileTitle}>🎬 Open video</Text>
-            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-          </TouchableOpacity>
-        );
-      } else if (item.media.type === "file" && signed) {
-        mediaNode = (
-          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
-            <Text style={styles.fileTitle}>📎 {item.media.name || "Open file"}</Text>
-            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-          </TouchableOpacity>
-        );
-      }
-    }
-
-    return (
-      <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
-        {item.text ? (
-          <ParsedText
-            style={styles.messageText}
-            parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
-            selectable
-          >
-            {item.text}
-          </ParsedText>
-        ) : null}
-
-        {item.link ? (
-          <View style={{ marginBottom: 6, maxWidth: 280 }}>
-            <LinkPreviewCard url={item.link} onPress={onPressLink} />
-          </View>
-        ) : null}
-
-        {mediaNode}
-
-        <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
-      </View>
-    );
   };
 
   return (
@@ -451,8 +393,16 @@ export default function ChatScreen({ route }) {
 
       <FlatList
         data={messages}
-        renderItem={renderMessage}
         keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <MessageItem
+            item={item}
+            myEmail={myEmail}
+            onPressLink={onPressLink}
+            openUrl={openUrl}
+            fetchSigned={fetchAndCache}
+          />
+        )}
         contentContainerStyle={{ padding: 10 }}
         keyboardShouldPersistTaps="handled"
       />
