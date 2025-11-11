@@ -5,7 +5,7 @@ export default function HomeScreen({ user }) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.card}>
-        <Text style={styles.title}>Welcome to MyApp</Text>
+        <Text style={styles.title}>Welcome to LFIcare</Text>
         <Text style={styles.subtitle}>
           {user
             ? `Hello ${user.email || "there"} — explore your programs and chat with your teachers from the header.`

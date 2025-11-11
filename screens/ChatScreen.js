@@ -3,10 +3,13 @@ import * as ImagePicker from "expo-image-picker";
 import {
   addDoc,
   collection,
+  endBefore,
+  getDocs,
+  limitToLast,
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp,
+  serverTimestamp
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { ref as storageRef, uploadBytes } from "firebase/storage";
@@ -14,11 +17,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -31,8 +36,13 @@ import { auth, db, functions, storage } from "../firebaseConfig";
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
+// ---------- Tunables ----------
+const PAGE_SIZE = 25;
+const LIVE_LIMIT = 50;
+// ------------------------------
+
 const guessExtFromMime = (mime = "") => {
-  const m = mime.toLowerCase();
+  const m = (mime || "").toLowerCase();
   if (m.includes("png")) return "png";
   if (m.includes("webp")) return "webp";
   if (m.includes("gif")) return "gif";
@@ -47,7 +57,21 @@ const guessExtFromMime = (mime = "") => {
   return "bin";
 };
 
-// --- Lightweight OG preview (best-effort) ---
+// ====== URL Utils / Previews ======
+const YT_PATTERNS = [
+  /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([\w-]{6,})/i,
+  /(?:https?:\/\/)?(?:www\.)?youtube\.com\/shorts\/([\w-]{6,})/i,
+  /(?:https?:\/\/)?(?:www\.)?youtu\.be\/([\w-]{6,})/i,
+];
+const extractYouTubeId = (url) => {
+  for (const re of YT_PATTERNS) {
+    const m = (url || "").match(re);
+    if (m?.[1]) return m[1];
+  }
+  return null;
+};
+
+// Lightweight OG fetch + YouTube fallback thumbnail
 async function fetchOg(url) {
   try {
     const res = await fetch(url, { method: "GET", headers: { Accept: "text/html" } });
@@ -55,17 +79,35 @@ async function fetchOg(url) {
     const get = (prop) => {
       const m = html.match(
         new RegExp(
-          `<meta[^>]+property=["']${prop}["'][^>]+content=["']([^"']+)["']`,
+          `<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`,
           "i"
         )
       );
       return m?.[1];
     };
-    const title = get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
-    const desc = get("og:description") || "";
-    const image = get("og:image") || null;
+    const title =
+      get("og:title") ||
+      get("twitter:title") ||
+      html.match(/<title>([^<]+)<\/title>/i)?.[1] ||
+      url;
+
+    let image = get("og:image") || get("twitter:image") || null;
+    const desc = get("og:description") || get("twitter:description") || "";
+
+    if (!image) {
+      const vid = extractYouTubeId(url);
+      if (vid) image = `https://img.youtube.com/vi/${vid}/hqdefault.jpg`;
+    }
     return { title, desc, image };
   } catch {
+    const vid = extractYouTubeId(url);
+    if (vid) {
+      return {
+        title: "YouTube",
+        desc: "",
+        image: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
+      };
+    }
     return { title: url, desc: "", image: null };
   }
 }
@@ -73,17 +115,19 @@ async function fetchOg(url) {
 function LinkPreviewCard({ url, onPress }) {
   const [data, setData] = useState(null);
   const mounted = useRef(true);
+
   useEffect(() => {
     mounted.current = true;
     fetchOg(url).then((d) => mounted.current && setData(d));
-    return () => {
-      mounted.current = false;
-    };
+    return () => { mounted.current = false; };
   }, [url]);
+
   return (
     <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
-      {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImage} /> : null}
-      <View style={{ flex: 1 }}>
+      {data?.image ? (
+        <Image source={{ uri: data.image }} style={styles.cardImageLarge} />
+      ) : null}
+      <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}>
         <Text numberOfLines={1} style={styles.cardTitle}>
           {data?.title || url}
         </Text>
@@ -100,7 +144,7 @@ function LinkPreviewCard({ url, onPress }) {
   );
 }
 
-/** Upload οποιουδήποτε uri (content://, file://) στο Storage. Επιστρέφει το storagePath που αποθηκεύουμε στο Firestore. */
+/** Upload οποιουδήποτε uri (content://, file://) στο Storage. Επιστρέφει storagePath. */
 async function uploadUriToStorage({ uri, mime, storagePath }) {
   const res = await fetch(uri);
   const blob = await res.blob();
@@ -109,18 +153,18 @@ async function uploadUriToStorage({ uri, mime, storagePath }) {
   return storagePath;
 }
 
-/** Καλεί την Cloud Function για να πάρει short-lived signed URL για ένα storagePath */
+/** Short-lived signed URL για ένα storagePath */
 async function getSignedUrlFor(storagePath) {
   const callable = httpsCallable(functions, "chat_getSignedUrl");
   const { data } = await callable({ storagePath });
-  return data?.url; // signed URL
+  return data?.url;
 }
 
-/** Διαχείριση incoming share (text / image / video / generic file / multiple) */
+/** Incoming share (text/image/video/file/multiple) */
 async function handleIncomingShare({ chatId, myEmail, item, uid }) {
   if (!chatId || !myEmail || !item || !uid) return;
 
-  // 1) Text (text/plain)
+  // 1) Text
   if (item.mimeType?.startsWith("text/")) {
     const text = (item.data || "").trim();
     if (!text) return;
@@ -167,7 +211,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     return;
   }
 
-  // 4) Multiple items (Android SEND_MULTIPLE)
+  // 4) Multiple (Android SEND_MULTIPLE)
   if (Array.isArray(item.items) && item.items.length) {
     for (const sub of item.items) {
       await handleIncomingShare({ chatId, myEmail, item: sub, uid });
@@ -175,7 +219,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     return;
   }
 
-  // 5) Generic file (*/*)
+  // 5) Generic file
   if (item.data) {
     const uri = item.data;
     const mime = item.mimeType || "application/octet-stream";
@@ -192,97 +236,139 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
   }
 }
 
-/** Μικρό memoized cache για signed URLs (ανά storagePath) */
-const useSignedUrlCache = () => {
-  const [cache, setCache] = useState({}); // { storagePath: signedUrl }
-
-  const fetchAndCache = useCallback(
-    async (storagePath) => {
-      if (!storagePath) return null;
-      if (cache[storagePath]) return cache[storagePath];
-      const url = await getSignedUrlFor(storagePath);
-      setCache((m) => ({ ...m, [storagePath]: url }));
-      return url;
-    },
-    [cache]
-  );
-
-  return { cache, fetchAndCache, setCache };
+// ===== Helpers εμφάνισης =====
+const dayKeyFromTs = (ts) => {
+  if (!ts) return "unknown";
+  const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
+  return d.toISOString().slice(0, 10);
+};
+const dayLabel = (key) => {
+  const d = new Date(key);
+  if (isNaN(d.getTime())) return key;
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+const timeLabel = (ts) => {
+  if (!ts) return "";
+  const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 };
 
-/** Child component για κάθε μήνυμα — εδώ επιτρέπεται να χρησιμοποιούμε hooks */
-function MessageItem({ item, myEmail, onPressLink, openUrl, fetchSigned }) {
+const useSignedUrlCache = () => {
+  const [cache, setCache] = useState({});
+  const fetchAndCache = useCallback(async (storagePath) => {
+    if (!storagePath) return null;
+    if (cache[storagePath]) return cache[storagePath];
+    const url = await getSignedUrlFor(storagePath);
+    setCache((m) => ({ ...m, [storagePath]: url }));
+    return url;
+  }, [cache]);
+  return { fetchAndCache };
+};
+
+const Avatar = ({ email }) => {
+  const letter = (email || "?").slice(0, 1).toUpperCase();
+  return (
+    <View style={styles.avatar}>
+      <Text style={styles.avatarText}>{letter}</Text>
+    </View>
+  );
+};
+
+const DaySeparator = ({ label }) => (
+  <View style={styles.dayWrap}>
+    <View style={styles.dayLine} />
+    <Text style={styles.dayText}>{label}</Text>
+    <View style={styles.dayLine} />
+  </View>
+);
+
+function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
   const isMine =
-    myEmail && typeof item.senderEmail === "string"
-      ? item.senderEmail.toLowerCase() === myEmail
+    myEmail && typeof msg.senderEmail === "string"
+      ? msg.senderEmail.toLowerCase() === myEmail
       : false;
 
   const [signed, setSigned] = useState(null);
 
-  // Φέρε signed URL όταν έχει media
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        if (item?.media?.storagePath) {
-          const url = await fetchSigned(item.media.storagePath);
+        if (msg?.media?.storagePath) {
+          const url = await fetchSigned(msg.media.storagePath);
           if (alive) setSigned(url);
-        } else {
-          setSigned(null);
-        }
+        } else setSigned(null);
       } catch (e) {
         console.warn("Signed URL error:", e?.message);
       }
     })();
-    return () => {
-      alive = false;
-    };
-  }, [item?.media?.storagePath, fetchSigned]);
+    return () => { alive = false; };
+  }, [msg?.media?.storagePath, fetchSigned]);
+
+  const screenW = Dimensions.get("window").width;
+  const imgSize = Math.min(380, Math.floor(screenW * 0.78));
 
   return (
-    <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
-      {item.text ? (
-        <ParsedText
-          style={styles.messageText}
-          parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
-          selectable
-        >
-          {item.text}
-        </ParsedText>
-      ) : null}
+    <View style={[styles.row, isMine ? styles.rowMine : styles.rowOther]}>
+      {!isMine && <Avatar email={msg.senderEmail} />}
 
-      {item.link ? (
-        <View style={{ marginBottom: 6, maxWidth: 280 }}>
-          <LinkPreviewCard url={item.link} onPress={onPressLink} />
-        </View>
-      ) : null}
+      <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+        {!!msg.text && (
+          <ParsedText
+            style={[styles.messageText, isMine && { color: "#fff" }]}
+            parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
+            selectable
+          >
+            {msg.text}
+          </ParsedText>
+        )}
 
-      {item.media?.type === "image" && signed ? (
-        <Image source={{ uri: signed }} style={styles.image} />
-      ) : null}
+        {!!msg.link && (
+          <View style={{ marginTop: msg.text ? 8 : 0, maxWidth: 420 }}>
+            <LinkPreviewCard url={msg.link} onPress={onPressLink} />
+          </View>
+        )}
 
-      {item.media?.type === "video" && signed ? (
-        <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
-          <Text style={styles.fileTitle}>🎬 Open video</Text>
-          <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-        </TouchableOpacity>
-      ) : null}
+        {msg.media?.type === "image" && signed && (
+          <Image
+            source={{ uri: signed }}
+            style={{ width: imgSize, height: imgSize, borderRadius: 14, marginTop: 6 }}
+          />
+        )}
 
-      {item.media?.type === "file" && signed ? (
-        <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
-          <Text style={styles.fileTitle}>📎 {item.media.name || "Open file"}</Text>
-          <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-        </TouchableOpacity>
-      ) : null}
+        {msg.media?.type === "video" && signed && (
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+            <Text style={styles.fileTitle}>🎬 Open video</Text>
+            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+          </TouchableOpacity>
+        )}
 
-      <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
+        {msg.media?.type === "file" && signed && (
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+            <Text style={styles.fileTitle}>📎 {msg.media.name || "Open file"}</Text>
+            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+          </TouchableOpacity>
+        )}
+
+        <Text style={[styles.time, isMine ? styles.timeMine : styles.timeOther]}>
+          {timeLabel(msg.timestamp)}
+        </Text>
+      </View>
     </View>
   );
 }
 
 export default function ChatScreen({ route }) {
   const { chatId, programTitle } = route?.params ?? {};
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([]); // ascending
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -293,19 +379,24 @@ export default function ChatScreen({ route }) {
   );
   const uid = currentUser?.uid || null;
 
-  // μικρό cache για signed URLs
   const { fetchAndCache } = useSignedUrlCache();
+  const listRef = useRef(null);
 
-  // subscribe to messages
+  // ====== LIVE LISTENER (τελευταία LIVE_LIMIT σε ascending) ======
   useEffect(() => {
     if (!chatId) return;
-    const q = query(
+    const liveQ = query(
       collection(db, "chats", chatId, "messages"),
-      orderBy("timestamp", "asc")
+      orderBy("timestamp", "asc"),
+      limitToLast(LIVE_LIMIT)
     );
     const unsub = onSnapshot(
-      q,
-      (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      liveQ,
+      (snap) => {
+        const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setMessages(arr);
+        setHasMore(true);
+      },
       (err) => {
         console.error("Messages subscribe error:", err);
         Alert.alert("Error", err.message);
@@ -314,14 +405,49 @@ export default function ChatScreen({ route }) {
     return () => unsub();
   }, [chatId]);
 
-  // Share intents / extensions (Android-only & module-guarded)
+  // ====== Load older (asc + endBefore(oldest) + limitToLast) ======
+  const loadOlder = useCallback(async () => {
+    if (!chatId || loadingOlder || !hasMore || messages.length === 0) return;
+    try {
+      setLoadingOlder(true);
+      const oldest = messages[0];
+      const oldestTs = oldest?.timestamp;
+      if (!oldestTs) { setLoadingOlder(false); return; }
+
+      const olderQ = query(
+        collection(db, "chats", chatId, "messages"),
+        orderBy("timestamp", "asc"),
+        endBefore(oldestTs),
+        limitToLast(PAGE_SIZE)
+      );
+      const snap = await getDocs(olderQ);
+      const got = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      if (got.length === 0) {
+        setHasMore(false);
+        setLoadingOlder(false);
+        return;
+      }
+      setMessages((prev) => [...got, ...prev]);
+    } catch (e) {
+      console.error("Load older failed:", e);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [chatId, messages, hasMore, loadingOlder]);
+
+  // ------- Helpers -------
+  const scrollToBottom = (animated = true) => {
+    // inverted list -> bottom οπτικά = offset 0
+    listRef.current?.scrollToOffset?.({ offset: 0, animated });
+  };
+
+  // Android Share
   useEffect(() => {
     const hasModule =
       Platform.OS === "android" &&
       ShareMenu &&
       typeof ShareMenu.getInitialShare === "function" &&
       typeof ShareMenu.addNewShareListener === "function";
-
     if (!hasModule) return;
 
     const run = (item) => {
@@ -333,7 +459,10 @@ export default function ChatScreen({ route }) {
           console.error("Share handling failed:", e);
           Alert.alert("Share error", e?.message ?? "Failed to import shared content.");
         })
-        .finally(() => setLoading(false));
+        .finally(() => {
+          setLoading(false);
+          setTimeout(() => scrollToBottom(true), 60);
+        });
     };
 
     try {
@@ -341,15 +470,11 @@ export default function ChatScreen({ route }) {
       if (maybePromise && typeof maybePromise.then === "function") {
         maybePromise.then(run).catch(() => {});
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     const listener = ShareMenu.addNewShareListener(run);
     return () => {
-      try {
-        listener?.remove?.();
-      } catch {}
+      try { listener?.remove?.(); } catch {}
     };
   }, [chatId, myEmail, uid]);
 
@@ -368,13 +493,13 @@ export default function ChatScreen({ route }) {
         timestamp: serverTimestamp(),
       });
       setInput("");
+      setTimeout(() => scrollToBottom(true), 60);
     } catch (error) {
       console.error("Message send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send message.");
     }
   };
 
-  // PICK image
   const pickImage = async () => {
     if (!chatId || !myEmail || !uid) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -387,8 +512,8 @@ export default function ChatScreen({ route }) {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaType.Images,
-        quality: 0.8,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images, // <-- FIX
+        quality: 0.92,
         base64: false,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -404,12 +529,13 @@ export default function ChatScreen({ route }) {
       const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
 
       await uploadUriToStorage({ uri: asset.uri, mime, storagePath });
-
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
         media: { type: "image", storagePath, name: fileId, mime },
         timestamp: serverTimestamp(),
       });
+
+      setTimeout(() => scrollToBottom(true), 60);
     } catch (error) {
       console.error("Image send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send image.");
@@ -418,7 +544,6 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // PICK video
   const pickVideo = async () => {
     if (!chatId || !myEmail || !uid) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
@@ -431,7 +556,7 @@ export default function ChatScreen({ route }) {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaType.Videos,
+        mediaTypes: ImagePicker.MediaTypeOptions.Videos, // <-- FIX
         quality: 1,
         base64: false,
       });
@@ -448,12 +573,13 @@ export default function ChatScreen({ route }) {
       const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
 
       await uploadUriToStorage({ uri: asset.uri, mime, storagePath });
-
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
         media: { type: "video", storagePath, name: fileId, mime },
         timestamp: serverTimestamp(),
       });
+
+      setTimeout(() => scrollToBottom(true), 60);
     } catch (error) {
       console.error("Video send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send video.");
@@ -480,126 +606,172 @@ export default function ChatScreen({ route }) {
   };
 
   const openUrl = async (url) => {
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert("Cannot open", url);
-    }
+    try { await Linking.openURL(url); }
+    catch { Alert.alert("Cannot open", url); }
   };
+
+  // Render data: κρατάμε asc στο state, αλλά στο render κάνουμε reverse
+  // ώστε με inverted FlatList το «κάτω» να είναι πάντα το νεότερο.
+  const renderData = useMemo(() => {
+    // με separators ανά ημέρα
+    const asc = messages;
+    const out = [];
+    let lastDay = null;
+    for (let i = 0; i < asc.length; i++) {
+      const m = asc[i];
+      const k = dayKeyFromTs(m.timestamp || Date.now());
+      if (k !== lastDay) {
+        out.push({ type: "day", id: `day-${k}-${i}`, label: dayLabel(k) });
+        lastDay = k;
+      }
+      out.push({ type: "msg", id: m.id, data: m });
+    }
+    // reverse για inverted
+    return out.slice().reverse();
+  }, [messages]);
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <Text style={styles.headerTitle}>{programTitle || "Chat"}</Text>
+      <View style={styles.topBar}>
+        <Text numberOfLines={1} style={styles.topTitle}>{programTitle || "Chat"}</Text>
+      </View>
 
       <FlatList
-        data={messages}
+        ref={listRef}
+        data={renderData}
+        inverted
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <MessageItem
-            item={item}
-            myEmail={myEmail}
-            onPressLink={onPressLink}
-            openUrl={openUrl}
-            fetchSigned={fetchAndCache}
-          />
-        )}
-        contentContainerStyle={{ padding: 10 }}
+        renderItem={({ item }) =>
+          item.type === "day" ? (
+            <DaySeparator label={item.label} />
+          ) : (
+            <MessageBubble
+              msg={item.data}
+              myEmail={myEmail}
+              onPressLink={onPressLink}
+              openUrl={openUrl}
+              fetchSigned={fetchAndCache}
+            />
+          )
+        }
+        contentContainerStyle={{ padding: 12, paddingTop: 6 }}
         keyboardShouldPersistTaps="handled"
+        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
+        onEndReachedThreshold={0.15}
+        onEndReached={() => {
+          // inverted: onEndReached όταν φτάνουμε «πάνω» οπτικά -> φέρε παλιότερα
+          loadOlder();
+        }}
+        ListFooterComponent={
+          loadingOlder ? (
+            <View style={{ paddingVertical: 8 }}>
+              <ActivityIndicator />
+            </View>
+          ) : null
+        }
       />
 
       {loading && (
-        <View style={{ padding: 8, alignItems: "center" }}>
-          <ActivityIndicator size="large" color="#28a745" />
+        <View style={{ padding: 6, alignItems: "center" }}>
+          <ActivityIndicator size="large" color="#22c55e" />
         </View>
       )}
 
-      <View style={styles.inputContainer}>
-        <TouchableOpacity onPress={pickImage} style={styles.imageButton}>
-          <Text style={styles.imageButtonText}>📷</Text>
-        </TouchableOpacity>
+      <View style={styles.inputBar}>
+        <Pressable onPress={pickImage} style={({ pressed }) => [styles.circleBtn, pressed && { opacity: 0.7 }]}>
+          <Text style={styles.circleBtnText}>📷</Text>
+        </Pressable>
 
-        <TouchableOpacity onPress={pickVideo} style={[styles.imageButton, { marginLeft: 6 }]}>
-          <Text style={styles.imageButtonText}>🎥</Text>
-        </TouchableOpacity>
+        <Pressable onPress={pickVideo} style={({ pressed }) => [styles.circleBtn, pressed && { opacity: 0.7 }]}>
+          <Text style={styles.circleBtnText}>🎥</Text>
+        </Pressable>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Type a message or paste a link…"
-          value={input}
-          onChangeText={setInput}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+        <View style={styles.inputWrap}>
+          <TextInput
+            style={styles.input}
+            placeholder="Message…"
+            value={input}
+            onChangeText={setInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+            multiline
+            onFocus={() => setTimeout(() => scrollToBottom(true), 60)}
+          />
+        </View>
 
-        <TouchableOpacity onPress={sendMessage} style={styles.sendButton}>
-          <Text style={styles.sendButtonText}>Send</Text>
-        </TouchableOpacity>
+        <Pressable onPress={sendMessage} style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.85 }]}>
+          <Text style={styles.sendBtnText}>➤</Text>
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f5f5f5" },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    paddingVertical: 12,
-    textAlign: "center",
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
-  },
-  messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
-  myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
-  otherMessage: { backgroundColor: "#fff", alignSelf: "flex-start" },
-  messageText: { fontSize: 16, marginBottom: 5 },
-  linkText: { color: "#007bff", textDecorationLine: "underline" },
-  senderName: { fontSize: 12, color: "#555", marginTop: 3 },
-  image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
+  container: { flex: 1, backgroundColor: "#F6F7FB" },
 
-  inputContainer: {
-    flexDirection: "row",
-    padding: 10,
+  topBar: {
+    height: 42,
     alignItems: "center",
-    borderTopWidth: 1,
-    borderColor: "#ddd",
+    justifyContent: "center",
     backgroundColor: "#fff",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5E7EB",
   },
-  input: {
-    flex: 1,
-    backgroundColor: "#f1f1f1",
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    marginHorizontal: 10,
-    fontSize: 16,
-  },
-  sendButton: {
-    backgroundColor: "#28a745",
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-  },
-  sendButtonText: { color: "#fff", fontWeight: "600" },
-  imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25 },
-  imageButtonText: { fontSize: 18 },
+  topTitle: { fontSize: 15, fontWeight: "700", color: "#111827" },
 
-  // Link card
+  row: { flexDirection: "row", marginVertical: 6, paddingHorizontal: 4 },
+  rowMine: { justifyContent: "flex-end" },
+  rowOther: { justifyContent: "flex-start" },
+
+  avatar: {
+    width: 32, height: 32, borderRadius: 16, backgroundColor: "#CBD5E1",
+    alignItems: "center", justifyContent: "center", marginRight: 8, marginTop: 2,
+  },
+  avatarText: { color: "#1F2937", fontWeight: "700" },
+
+  bubble: {
+    maxWidth: "82%",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    ...Platform.select({
+      ios: { shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+      android: { elevation: 1 },
+    }),
+  },
+  bubbleMine: {
+    backgroundColor: "#3B82F6",
+    borderTopRightRadius: 6,
+    alignSelf: "flex-end",
+  },
+  bubbleOther: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 6,
+    alignSelf: "flex-start",
+  },
+
+  messageText: { fontSize: 16, color: "#111827" },
+  linkText: { textDecorationLine: "underline" },
+
+  time: { fontSize: 11, marginTop: 6, alignSelf: "flex-end", opacity: 0.75 },
+  timeMine: { color: "rgba(255,255,255,0.9)" },
+  timeOther: { color: "#6B7280" },
+
+  // Link card (με μεγάλη εικόνα πάνω)
   card: {
-    flexDirection: "row",
     backgroundColor: "#fff",
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: "#eee",
     overflow: "hidden",
-    maxWidth: 280,
+    maxWidth: 420,
+    marginTop: 6,
   },
-  cardImage: { width: 80, height: 80 },
-  cardTitle: { fontWeight: "600", marginHorizontal: 10, marginTop: 8 },
-  cardDesc: { color: "#555", marginHorizontal: 10, marginTop: 2, fontSize: 12 },
-  cardUrl: { color: "#777", marginHorizontal: 10, marginVertical: 8, fontSize: 12 },
+  cardImageLarge: { width: "100%", height: 200 },
+  cardTitle: { fontWeight: "700", color: "#111827" },
+  cardDesc: { color: "#4B5563", marginTop: 4, fontSize: 12 },
+  cardUrl: { color: "#6B7280", marginTop: 6, fontSize: 12 },
 
   // file/video card
   fileCard: {
@@ -608,9 +780,62 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
     padding: 10,
-    marginBottom: 6,
-    maxWidth: 280,
+    marginTop: 6,
+    maxWidth: 380,
   },
-  fileTitle: { fontWeight: "600", marginBottom: 4 },
-  fileUrl: { fontSize: 12, color: "#777" },
+  fileTitle: { fontWeight: "600", marginBottom: 4, color: "#111827" },
+  fileUrl: { fontSize: 12, color: "#6B7280" },
+
+  // day separator
+  dayWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginVertical: 10,
+    paddingHorizontal: 8,
+  },
+  dayLine: { flex: 1, height: 1, backgroundColor: "#E5E7EB" },
+  dayText: {
+    fontSize: 12,
+    color: "#6B7280",
+    backgroundColor: "#E5E7EB",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+
+  // input
+  inputBar: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5E7EB",
+    gap: 8,
+  },
+  circleBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "#F3F4F6", borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB",
+  },
+  circleBtnText: { fontSize: 18 },
+
+  inputWrap: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#E5E7EB",
+    maxHeight: 120,
+  },
+  input: { paddingHorizontal: 12, paddingVertical: 8, fontSize: 16 },
+
+  sendBtn: {
+    width: 44, height: 44, borderRadius: 22,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "#22C55E",
+  },
+  sendBtnText: { color: "#fff", fontSize: 18, fontWeight: "800", marginLeft: 2 },
 });
