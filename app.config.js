@@ -80,6 +80,7 @@ export default ({ config }) => ({
       android: {
         compileSdkVersion: 35,
         targetSdkVersion: 35,
+        buildToolsVersion: "34.0.0",
         minSdkVersion: 24,
         kotlinVersion: "1.9.25",
         javaVersion: "17",
