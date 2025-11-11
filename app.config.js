@@ -91,7 +91,52 @@ export default ({ config }) => ({
       },
     },
   ],
-  "react-native-share-menu",
+  // --- Inline plugin για react-native-share-menu (Android intent-filters) ---
+  (config) => {
+    const { withAndroidManifest } = require("@expo/config-plugins");
+
+    return withAndroidManifest(config, (cfg) => {
+      const manifest = cfg.modResults?.manifest;
+      if (!manifest?.application?.[0]?.activity) return cfg;
+
+      // Βρες MainActivity
+      const activities = manifest.application[0].activity;
+      const mainActivity =
+        activities.find((a) => a.$["android:name"] === ".MainActivity") || activities[0];
+
+      // Βεβαιώσου ότι υπάρχει array intent-filter
+      mainActivity["intent-filter"] = mainActivity["intent-filter"] || [];
+
+      // helper για αποφυγή διπλοεγγραφής
+      const hasIntent = (actionName) =>
+        mainActivity["intent-filter"].some(
+          (f) =>
+            Array.isArray(f.action) &&
+            f.action.some((a) => a.$["android:name"] === actionName)
+        );
+
+      // SEND (*/*)
+      if (!hasIntent("android.intent.action.SEND")) {
+        mainActivity["intent-filter"].push({
+          action: [{ $: { "android:name": "android.intent.action.SEND" } }],
+          category: [{ $: { "android:name": "android.intent.category.DEFAULT" } }],
+          data: [{ $: { "android:mimeType": "*/*" } }],
+        });
+      }
+
+      // SEND_MULTIPLE (*/*)
+      if (!hasIntent("android.intent.action.SEND_MULTIPLE")) {
+        mainActivity["intent-filter"].push({
+          action: [{ $: { "android:name": "android.intent.action.SEND_MULTIPLE" } }],
+          category: [{ $: { "android:name": "android.intent.category.DEFAULT" } }],
+          data: [{ $: { "android:mimeType": "*/*" } }],
+        });
+      }
+
+      return cfg;
+    });
+  },
+
   "expo-updates",
 ],
 
