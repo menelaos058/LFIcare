@@ -22,7 +22,7 @@ export default ({ config }) => ({
     bundleIdentifier: "com.menelaos.lficare",
     buildNumber: "1",
     supportsTablet: false,
-    deploymentTarget: "15.1",               // 👈 ΑΠΑΡΑΙΤΗΤΟ
+    deploymentTarget: "15.1",              
     infoPlist: {
       NSCameraUsageDescription: "Η κάμερα χρησιμοποιείται για λειτουργίες της εφαρμογής.",
       NSPhotoLibraryUsageDescription: "Η βιβλιοθήκη φωτογραφιών χρησιμοποιείται για επιλογή/αποστολή εικόνων.",
@@ -38,7 +38,19 @@ export default ({ config }) => ({
       backgroundColor: "#ffffff"
     },
     permissions: ["INTERNET", "CAMERA"],
-    jsEngine: "hermes"
+    jsEngine: "hermes",
+    intentFilters: [
+          {
+            action: "android.intent.action.SEND",
+            categories: ["android.intent.category.DEFAULT"],
+            dataMimeTypes: ["*/*"],
+          },
+          {
+            action: "android.intent.action.SEND_MULTIPLE",
+            categories: ["android.intent.category.DEFAULT"],
+            dataMimeTypes: ["*/*"],
+          },
+        ],
   },
 
   updates: {
@@ -74,9 +86,11 @@ export default ({ config }) => ({
       },
       ios: {
         deploymentTarget: "15.1",
+        activationRules: [{ extension: "public.data" }],
       },
     },
   ],
+  "react-native-share-menu",
   "expo-updates",
 ],
 

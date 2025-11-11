@@ -1,0 +1,12 @@
+{
+  "name": "functions",
+  "private": true,
+  "engines": { "node": "20" },
+  "scripts": {
+    "deploy": "firebase deploy --only functions:chat_getSignedUrl"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.5.0",
+    "firebase-functions": "^5.0.1"
+  }
+}

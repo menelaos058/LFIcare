@@ -8,10 +8,10 @@ import {
   query,
   serverTimestamp,
 } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
 import {
-  getDownloadURL,
   ref as storageRef,
-  uploadBytes,
+  uploadBytes
 } from "firebase/storage";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -29,16 +29,25 @@ import {
   View,
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
-import { auth, db, storage } from "../firebaseConfig";
+import ShareMenu from "react-native-share-menu";
+import { auth, db, functions, storage } from "../firebaseConfig"; // <- ΠΡΟΣΟΧΗ: θέλουμε και functions
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 
-const guessExtFromMime = (mime) => {
-  if (/png/i.test(mime)) return "png";
-  if (/webp/i.test(mime)) return "webp";
-  if (/gif/i.test(mime)) return "gif";
-  if (/heic|heif/i.test(mime)) return "heic";
-  return "jpg";
+const guessExtFromMime = (mime = "") => {
+  const m = mime.toLowerCase();
+  if (m.includes("png")) return "png";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("heic") || m.includes("heif")) return "heic";
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("quicktime") || m.includes("mov")) return "mov";
+  if (m.includes("mkv")) return "mkv";
+  if (m.includes("avi")) return "avi";
+  if (m.includes("pdf")) return "pdf";
+  if (m.includes("plain")) return "txt";
+  return "bin";
 };
 
 // --- Lightweight OG preview (best-effort) ---
@@ -55,9 +64,7 @@ async function fetchOg(url) {
       );
       return m?.[1];
     };
-    const title =
-      get("og:title") ||
-      (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url); // ✅ σωστό regex (όχι <\\/title>)
+    const title = get("og:title") || (html.match(/<title>([^<]+)<\/title>/i)?.[1] ?? url);
     const desc = get("og:description") || "";
     const image = get("og:image") || null;
     return { title, desc, image };
@@ -72,28 +79,110 @@ function LinkPreviewCard({ url, onPress }) {
   useEffect(() => {
     mounted.current = true;
     fetchOg(url).then((d) => mounted.current && setData(d));
-    return () => {
-      mounted.current = false;
-    };
+    return () => { mounted.current = false; };
   }, [url]);
   return (
     <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
       {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImage} /> : null}
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={styles.cardTitle}>
-          {data?.title || url}
-        </Text>
-        {!!data?.desc && (
-          <Text numberOfLines={2} style={styles.cardDesc}>
-            {data.desc}
-          </Text>
-        )}
-        <Text numberOfLines={1} style={styles.cardUrl}>
-          {url}
-        </Text>
+        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
+        {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
+        <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
       </View>
     </TouchableOpacity>
   );
+}
+
+/** Upload οποιουδήποτε uri (content://, file://) στο Storage. Επιστρέφει το storagePath που αποθηκεύουμε στο Firestore. */
+async function uploadUriToStorage({ uri, mime, storagePath }) {
+  const res = await fetch(uri);
+  const blob = await res.blob();
+  const ref = storageRef(storage, storagePath);
+  await uploadBytes(ref, blob, { contentType: mime });
+  return storagePath;
+}
+
+/** Καλεί την Cloud Function για να πάρει short-lived signed URL για ένα storagePath */
+async function getSignedUrlFor(storagePath) {
+  const callable = httpsCallable(functions, "chat_getSignedUrl");
+  const { data } = await callable({ storagePath });
+  return data?.url; // signed URL
+}
+
+/** Διαχείριση incoming share (text / image / video / generic file / multiple) */
+async function handleIncomingShare({ chatId, myEmail, item, uid }) {
+  if (!chatId || !myEmail || !item || !uid) return;
+
+  // 1) Text (text/plain)
+  if (item.mimeType?.startsWith("text/")) {
+    const text = (item.data || "").trim();
+    if (!text) return;
+    const payload = EXACT_URL_REGEX.test(text) ? { link: text } : { text };
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      ...payload,
+      timestamp: serverTimestamp(),
+    });
+    return;
+  }
+
+  // 2) Image
+  if (item.mimeType?.startsWith("image/") && item.data) {
+    const uri = item.data;
+    const mime = item.mimeType || "image/jpeg";
+    const ext = guessExtFromMime(mime);
+    const fileId = `${Date.now()}.${ext}`;
+    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+    await uploadUriToStorage({ uri, mime, storagePath });
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      media: { type: "image", storagePath, name: fileId, mime },
+      timestamp: serverTimestamp(),
+    });
+    return;
+  }
+
+  // 3) Video
+  if (item.mimeType?.startsWith("video/") && item.data) {
+    const uri = item.data;
+    const mime = item.mimeType || "video/mp4";
+    const ext = guessExtFromMime(mime);
+    const fileId = `${Date.now()}.${ext}`;
+    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+    await uploadUriToStorage({ uri, mime, storagePath });
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      media: { type: "video", storagePath, name: fileId, mime },
+      timestamp: serverTimestamp(),
+    });
+    return;
+  }
+
+  // 4) Multiple items (Android SEND_MULTIPLE)
+  if (Array.isArray(item.items) && item.items.length) {
+    for (const sub of item.items) {
+      await handleIncomingShare({ chatId, myEmail, item: sub, uid });
+    }
+    return;
+  }
+
+  // 5) Generic file (*/*)
+  if (item.data) {
+    const uri = item.data;
+    const mime = item.mimeType || "application/octet-stream";
+    const ext = guessExtFromMime(mime);
+    const fileId = `${Date.now()}.${ext}`;
+    const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+    await uploadUriToStorage({ uri, mime, storagePath });
+    await addDoc(collection(db, "chats", chatId, "messages"), {
+      senderEmail: myEmail,
+      media: { type: "file", storagePath, name: fileId, mime },
+      timestamp: serverTimestamp(),
+    });
+  }
 }
 
 export default function ChatScreen({ route }) {
@@ -101,13 +190,16 @@ export default function ChatScreen({ route }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [signedUrlCache, setSignedUrlCache] = useState({}); // { storagePath: url }
 
+  const currentUser = auth.currentUser;
   const myEmail = useMemo(
-    () =>
-      auth.currentUser?.email ? auth.currentUser.email.toLowerCase() : null,
-    [auth.currentUser?.email]
+    () => (currentUser?.email ? currentUser.email.toLowerCase() : null),
+    [currentUser?.email]
   );
+  const uid = currentUser?.uid || null;
 
+  // subscribe to messages
   useEffect(() => {
     if (!chatId) return;
     const q = query(
@@ -124,6 +216,27 @@ export default function ChatScreen({ route }) {
     );
     return () => unsub();
   }, [chatId]);
+
+  // Share intents / extensions
+  useEffect(() => {
+    const run = (item) => {
+      if (!item) return;
+      if (!chatId || !myEmail || !uid) return;
+      setLoading(true);
+      handleIncomingShare({ chatId, myEmail, item, uid })
+        .catch((e) => {
+          console.error("Share handling failed:", e);
+          Alert.alert("Share error", e?.message ?? "Failed to import shared content.");
+        })
+        .finally(() => setLoading(false));
+    };
+
+    ShareMenu.getInitialShare(run);
+    const listener = ShareMenu.addNewShareListener(run);
+    return () => {
+      try { listener?.remove?.(); } catch {}
+    };
+  }, [chatId, myEmail, uid]);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -146,9 +259,9 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  // ---- PICK & UPLOAD (Blob path: fetch(file://...).blob() + uploadBytes) ----
+  // PICK image
   const pickImage = async () => {
-    if (!chatId || !myEmail) {
+    if (!chatId || !myEmail || !uid) {
       Alert.alert("Error", "Not authenticated or no chat selected.");
       return;
     }
@@ -158,11 +271,10 @@ export default function ChatScreen({ route }) {
         Alert.alert("Permission needed", "Please allow photo library access.");
         return;
       }
-
-      // Αφήνουμε τα default mediaTypes (εικόνες). Δεν χρησιμοποιούμε deprecated MediaTypeOptions.
       const result = await ImagePicker.launchImageLibraryAsync({
-        quality: 0.7,
-        base64: false, // <-- Απαραίτητο: αποφεύγουμε base64/data_url
+        mediaTypes: ImagePicker.MediaType.Images,
+        quality: 0.8,
+        base64: false,
       });
       if (result.canceled || !result.assets?.[0]) return;
 
@@ -173,25 +285,63 @@ export default function ChatScreen({ route }) {
 
       const mime = asset.mimeType || "image/jpeg";
       const ext = guessExtFromMime(mime);
-      const fileName = `${Date.now()}.${ext}`;
-      const path = `chat-images/${chatId}/${fileName}`;
+      const fileId = `${Date.now()}.${ext}`;
+      const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
 
-      // Παίρνουμε Blob απ’ ευθείας από file://
-      const res = await fetch(asset.uri);
-      const blob = await res.blob();
-
-      const ref = storageRef(storage, path);
-      await uploadBytes(ref, blob, { contentType: mime });
-      const url = await getDownloadURL(ref);
+      await uploadUriToStorage({ uri: asset.uri, mime, storagePath });
 
       await addDoc(collection(db, "chats", chatId, "messages"), {
         senderEmail: myEmail,
-        image: url,
+        media: { type: "image", storagePath, name: fileId, mime },
         timestamp: serverTimestamp(),
       });
     } catch (error) {
       console.error("Image send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send image.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // PICK video
+  const pickVideo = async () => {
+    if (!chatId || !myEmail || !uid) {
+      Alert.alert("Error", "Not authenticated or no chat selected.");
+      return;
+    }
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission needed", "Please allow photo library access.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaType.Videos,
+        quality: 1,
+        base64: false,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+
+      setLoading(true);
+
+      const asset = result.assets[0];
+      if (!asset.uri) throw new Error("No asset uri from picker");
+
+      const mime = asset.mimeType || "video/mp4";
+      const ext = guessExtFromMime(mime);
+      const fileId = `${Date.now()}.${ext}`;
+      const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
+
+      await uploadUriToStorage({ uri: asset.uri, mime, storagePath });
+
+      await addDoc(collection(db, "chats", chatId, "messages"), {
+        senderEmail: myEmail,
+        media: { type: "video", storagePath, name: fileId, mime },
+        timestamp: serverTimestamp(),
+      });
+    } catch (error) {
+      console.error("Video send failed:", error);
+      Alert.alert("Error", error?.message ?? "Failed to send video.");
     } finally {
       setLoading(false);
     }
@@ -214,19 +364,64 @@ export default function ChatScreen({ route }) {
     }
   };
 
+  // cache signed URL per storagePath (λήγει — μπορείς να το ξαναζητήσεις με long-press)
+  const useSignedUrl = (storagePath) => {
+    const [url, setUrl] = useState(signedUrlCache[storagePath]);
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        try {
+          if (!storagePath) return;
+          const signed = await getSignedUrlFor(storagePath);
+          if (alive) {
+            setUrl(signed);
+            setSignedUrlCache((m) => ({ ...m, [storagePath]: signed }));
+          }
+        } catch (e) {
+          console.warn("Signed URL error:", e?.message);
+        }
+      })();
+      return () => { alive = false; };
+    }, [storagePath]);
+    return url;
+  };
+
+  const openUrl = async (url) => {
+    try { await Linking.openURL(url); }
+    catch { Alert.alert("Cannot open", url); }
+  };
+
   const renderMessage = ({ item }) => {
     const isMine =
       myEmail && typeof item.senderEmail === "string"
         ? item.senderEmail.toLowerCase() === myEmail
         : false;
 
+    // media rendering
+    let mediaNode = null;
+    if (item.media?.storagePath && item.media?.type) {
+      const signed = useSignedUrl(item.media.storagePath);
+      if (item.media.type === "image" && signed) {
+        mediaNode = <Image source={{ uri: signed }} style={styles.image} />;
+      } else if (item.media.type === "video" && signed) {
+        mediaNode = (
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+            <Text style={styles.fileTitle}>🎬 Open video</Text>
+            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+          </TouchableOpacity>
+        );
+      } else if (item.media.type === "file" && signed) {
+        mediaNode = (
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+            <Text style={styles.fileTitle}>📎 {item.media.name || "Open file"}</Text>
+            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+          </TouchableOpacity>
+        );
+      }
+    }
+
     return (
-      <View
-        style={[
-          styles.messageContainer,
-          isMine ? styles.myMessage : styles.otherMessage,
-        ]}
-      >
+      <View style={[styles.messageContainer, isMine ? styles.myMessage : styles.otherMessage]}>
         {item.text ? (
           <ParsedText
             style={styles.messageText}
@@ -243,19 +438,15 @@ export default function ChatScreen({ route }) {
           </View>
         ) : null}
 
-        {item.image ? (
-          <Image source={{ uri: item.image }} style={styles.image} />
-        ) : null}
+        {mediaNode}
+
         <Text style={styles.senderName}>{isMine ? "You" : item.senderEmail}</Text>
       </View>
     );
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <Text style={styles.headerTitle}>{programTitle || "Chat"}</Text>
 
       <FlatList
@@ -275,6 +466,10 @@ export default function ChatScreen({ route }) {
       <View style={styles.inputContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.imageButton}>
           <Text style={styles.imageButtonText}>📷</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={pickVideo} style={[styles.imageButton, { marginLeft: 6 }]}>
+          <Text style={styles.imageButtonText}>🎥</Text>
         </TouchableOpacity>
 
         <TextInput
@@ -297,14 +492,8 @@ export default function ChatScreen({ route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f5f5f5" },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#333",
-    paddingVertical: 12,
-    textAlign: "center",
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
+    fontSize: 18, fontWeight: "600", color: "#333", paddingVertical: 12,
+    textAlign: "center", backgroundColor: "#fff", borderBottomWidth: 1, borderColor: "#ddd",
   },
   messageContainer: { padding: 10, borderRadius: 8, marginVertical: 5, maxWidth: "80%" },
   myMessage: { backgroundColor: "#d1e7dd", alignSelf: "flex-end" },
@@ -313,44 +502,35 @@ const styles = StyleSheet.create({
   linkText: { color: "#007bff", textDecorationLine: "underline" },
   senderName: { fontSize: 12, color: "#555", marginTop: 3 },
   image: { width: 200, height: 200, borderRadius: 8, marginBottom: 5 },
+
   inputContainer: {
-    flexDirection: "row",
-    padding: 10,
-    alignItems: "center",
-    borderTopWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#fff",
+    flexDirection: "row", padding: 10, alignItems: "center",
+    borderTopWidth: 1, borderColor: "#ddd", backgroundColor: "#fff",
   },
   input: {
-    flex: 1,
-    backgroundColor: "#f1f1f1",
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    marginHorizontal: 10,
-    fontSize: 16,
+    flex: 1, backgroundColor: "#f1f1f1", paddingVertical: 10, paddingHorizontal: 15,
+    borderRadius: 20, marginHorizontal: 10, fontSize: 16,
   },
-  sendButton: {
-    backgroundColor: "#28a745",
-    paddingVertical: 10,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-  },
+  sendButton: { backgroundColor: "#28a745", paddingVertical: 10, paddingHorizontal: 15, borderRadius: 20 },
   sendButtonText: { color: "#fff", fontWeight: "600" },
-  imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25, marginRight: 6 },
+  imageButton: { backgroundColor: "#ddd", padding: 10, borderRadius: 25 },
   imageButtonText: { fontSize: 18 },
 
   // Link card
   card: {
-    flexDirection: "row",
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
-    overflow: "hidden",
+    flexDirection: "row", backgroundColor: "#fff", borderRadius: 10,
+    borderWidth: 1, borderColor: "#eee", overflow: "hidden", maxWidth: 280,
   },
   cardImage: { width: 80, height: 80 },
   cardTitle: { fontWeight: "600", marginHorizontal: 10, marginTop: 8 },
   cardDesc: { color: "#555", marginHorizontal: 10, marginTop: 2, fontSize: 12 },
   cardUrl: { color: "#777", marginHorizontal: 10, marginVertical: 8, fontSize: 12 },
+
+  // file/video card
+  fileCard: {
+    backgroundColor: "#fff", borderRadius: 10, borderWidth: 1, borderColor: "#eee",
+    padding: 10, marginBottom: 6, maxWidth: 280,
+  },
+  fileTitle: { fontWeight: "600", marginBottom: 4 },
+  fileUrl: { fontSize: 12, color: "#777" },
 });

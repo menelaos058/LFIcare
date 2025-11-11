@@ -4,6 +4,7 @@ import Constants from "expo-constants";
 import { getApp, getApps, initializeApp } from "firebase/app";
 import { getAuth, getReactNativePersistence, initializeAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 import { getStorage } from "firebase/storage";
 
 // 1) Προτίμησε EXPO_PUBLIC_* envs (τρέχουν και σε dev & EAS builds)
@@ -44,6 +45,6 @@ try {
 
 const db = getFirestore(app);
 const storage = getStorage(app);
-
-export { app, auth, db, storage };
+const functions = getFunctions(app); // optionally: getFunctions(app, "us-central1")
+export { app, app, auth, auth, db, db, functions, storage, storage };
 export default app;
