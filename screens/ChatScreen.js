@@ -9,10 +9,10 @@ import {
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp
+  serverTimestamp,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { ref as storageRef, uploadBytes } from "firebase/storage";
+import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -27,20 +27,33 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from "react-native";
 import ParsedText from "react-native-parsed-text";
-import ShareMenu from "react-native-share-menu";
 import { auth, db, functions, storage } from "../firebaseConfig";
 
+// ------------------------ CONFIG ------------------------
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
+const PAGE_SIZE = 25;       // πόσα παλιότερα φορτώνουμε ανά «σελίδα»
+const LIVE_LIMIT = 50;      // πόσα κρατά ζωντανά ο listener
 
-// ---------- Tunables ----------
-const PAGE_SIZE = 25;
-const LIVE_LIMIT = 50;
-// ------------------------------
+// Lazy require για ShareMenu (Android only) ώστε να αποφύγουμε NativeEventEmitter warnings
+const getShareMenu = () => {
+  if (Platform.OS !== "android") return null;
+  try {
+    // eslint-disable-next-line global-require
+    return require("react-native-share-menu");
+  } catch {
+    return null;
+  }
+};
 
+// --------------------- MEDIA TYPES (Picker) ---------------------
+const MEDIA_ARRAY_SUPPORTED = !!ImagePicker.MediaType?.Images;
+const MEDIA_IMAGES = MEDIA_ARRAY_SUPPORTED ? [ImagePicker.MediaType.Images] : undefined;
+const MEDIA_VIDEOS = MEDIA_ARRAY_SUPPORTED ? [ImagePicker.MediaType.Videos] : undefined;
+
+// ------------------------ HELPERS ------------------------
 const guessExtFromMime = (mime = "") => {
   const m = (mime || "").toLowerCase();
   if (m.includes("png")) return "png";
@@ -123,7 +136,7 @@ function LinkPreviewCard({ url, onPress }) {
   }, [url]);
 
   return (
-    <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
+    <Pressable onPress={() => onPress(url)} style={styles.card}>
       {data?.image ? (
         <Image source={{ uri: data.image }} style={styles.cardImageLarge} />
       ) : null}
@@ -140,7 +153,7 @@ function LinkPreviewCard({ url, onPress }) {
           {url}
         </Text>
       </View>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -153,18 +166,44 @@ async function uploadUriToStorage({ uri, mime, storagePath }) {
   return storagePath;
 }
 
-/** Short-lived signed URL για ένα storagePath */
-async function getSignedUrlFor(storagePath) {
-  const callable = httpsCallable(functions, "chat_getSignedUrl");
-  const { data } = await callable({ storagePath });
-  return data?.url;
+/** Short-lived signed URL για ένα storagePath με fallback σε getDownloadURL */
+async function getSignedUrlWithRetry(storagePath, tries = 5, delayMs = 300) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const callable = httpsCallable(functions, "chat_getSignedUrl");
+      const { data } = await callable({ storagePath });
+      if (data?.url) return data.url;
+      throw new Error("no-url");
+    } catch (e) {
+      const msg = String(e?.message || "").toLowerCase();
+      const temporary = msg.includes("not-found") || msg.includes("no-url");
+      if (i < tries - 1 && temporary) {
+        await new Promise(r => setTimeout(r, delayMs * Math.pow(2, i)));
+        continue;
+      }
+      // Fallback σε direct GCS URL (αν το επιτρέπουν οι κανόνες)
+      try {
+        const ref = storageRef(storage, storagePath);
+        const direct = await getDownloadURL(ref);
+        return direct;
+      } catch {
+        return null;
+      }
+    }
+  }
+  try {
+    const ref = storageRef(storage, storagePath);
+    return await getDownloadURL(ref);
+  } catch {
+    return null;
+  }
 }
 
 /** Incoming share (text/image/video/file/multiple) */
 async function handleIncomingShare({ chatId, myEmail, item, uid }) {
   if (!chatId || !myEmail || !item || !uid) return;
 
-  // 1) Text
+  // Text
   if (item.mimeType?.startsWith("text/")) {
     const text = (item.data || "").trim();
     if (!text) return;
@@ -177,7 +216,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     return;
   }
 
-  // 2) Image
+  // Image
   if (item.mimeType?.startsWith("image/") && item.data) {
     const uri = item.data;
     const mime = item.mimeType || "image/jpeg";
@@ -194,7 +233,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     return;
   }
 
-  // 3) Video
+  // Video
   if (item.mimeType?.startsWith("video/") && item.data) {
     const uri = item.data;
     const mime = item.mimeType || "video/mp4";
@@ -211,7 +250,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     return;
   }
 
-  // 4) Multiple (Android SEND_MULTIPLE)
+  // Multiple
   if (Array.isArray(item.items) && item.items.length) {
     for (const sub of item.items) {
       await handleIncomingShare({ chatId, myEmail, item: sub, uid });
@@ -219,7 +258,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     return;
   }
 
-  // 5) Generic file
+  // Generic file
   if (item.data) {
     const uri = item.data;
     const mime = item.mimeType || "application/octet-stream";
@@ -263,7 +302,7 @@ const useSignedUrlCache = () => {
   const fetchAndCache = useCallback(async (storagePath) => {
     if (!storagePath) return null;
     if (cache[storagePath]) return cache[storagePath];
-    const url = await getSignedUrlFor(storagePath);
+    const url = await getSignedUrlWithRetry(storagePath);
     setCache((m) => ({ ...m, [storagePath]: url }));
     return url;
   }, [cache]);
@@ -304,14 +343,14 @@ function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
           if (alive) setSigned(url);
         } else setSigned(null);
       } catch (e) {
-        console.warn("Signed URL error:", e?.message);
+        // swallow
       }
     })();
     return () => { alive = false; };
   }, [msg?.media?.storagePath, fetchSigned]);
 
   const screenW = Dimensions.get("window").width;
-  const imgSize = Math.min(380, Math.floor(screenW * 0.78));
+  const imgSize = Math.min(420, Math.floor(screenW * 0.78));
 
   return (
     <View style={[styles.row, isMine ? styles.rowMine : styles.rowOther]}>
@@ -342,17 +381,17 @@ function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
         )}
 
         {msg.media?.type === "video" && signed && (
-          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+          <Pressable onPress={() => openUrl(signed)} style={styles.fileCard}>
             <Text style={styles.fileTitle}>🎬 Open video</Text>
             <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-          </TouchableOpacity>
+          </Pressable>
         )}
 
         {msg.media?.type === "file" && signed && (
-          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+          <Pressable onPress={() => openUrl(signed)} style={styles.fileCard}>
             <Text style={styles.fileTitle}>📎 {msg.media.name || "Open file"}</Text>
             <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-          </TouchableOpacity>
+          </Pressable>
         )}
 
         <Text style={[styles.time, isMine ? styles.timeMine : styles.timeOther]}>
@@ -435,49 +474,73 @@ export default function ChatScreen({ route }) {
     }
   }, [chatId, messages, hasMore, loadingOlder]);
 
-  // ------- Helpers -------
   const scrollToBottom = (animated = true) => {
     // inverted list -> bottom οπτικά = offset 0
     listRef.current?.scrollToOffset?.({ offset: 0, animated });
   };
 
   // Android Share
-  useEffect(() => {
-    const hasModule =
-      Platform.OS === "android" &&
-      ShareMenu &&
-      typeof ShareMenu.getInitialShare === "function" &&
-      typeof ShareMenu.addNewShareListener === "function";
-    if (!hasModule) return;
+ // Android Share (συμβατό με διάφορες εκδόσεις/περιβάλλοντα)
+useEffect(() => {
+  const ShareMenu = getShareMenu();
+  if (!ShareMenu) return;
 
-    const run = (item) => {
-      if (!item) return;
-      if (!chatId || !myEmail || !uid) return;
-      setLoading(true);
-      handleIncomingShare({ chatId, myEmail, item, uid })
-        .catch((e) => {
-          console.error("Share handling failed:", e);
-          Alert.alert("Share error", e?.message ?? "Failed to import shared content.");
-        })
-        .finally(() => {
-          setLoading(false);
-          setTimeout(() => scrollToBottom(true), 60);
-        });
-    };
+  const run = (item) => {
+    if (!item) return;
+    if (!chatId || !myEmail || !uid) return;
+    setLoading(true);
+    handleIncomingShare({ chatId, myEmail, item, uid })
+      .catch((e) => {
+        console.error("Share handling failed:", e);
+        Alert.alert("Share error", e?.message ?? "Failed to import shared content.");
+      })
+      .finally(() => {
+        setLoading(false);
+        setTimeout(() => scrollToBottom(true), 60);
+      });
+  };
 
-    try {
-      const maybePromise = ShareMenu.getInitialShare(run);
-      if (maybePromise && typeof maybePromise.then === "function") {
-        maybePromise.then(run).catch(() => {});
-      }
-    } catch {}
+  // 1) Αρχικά δεδομένα (ανάλογα τι διατίθεται)
+  try {
+    if (typeof ShareMenu.getInitialShare === "function") {
+      const maybe = ShareMenu.getInitialShare(run);
+      if (maybe?.then) maybe.then(run).catch(() => {});
+    } else if (typeof ShareMenu.getSharedText === "function") {
+      // παλαιότερο API
+      ShareMenu.getSharedText().then((text) => {
+        if (text) run({ mimeType: "text/plain", data: String(text) });
+      }).catch(() => {});
+    }
+  } catch {}
 
-    const listener = ShareMenu.addNewShareListener(run);
-    return () => {
-      try { listener?.remove?.(); } catch {}
-    };
-  }, [chatId, myEmail, uid]);
+  // 2) Live listener (δοκίμασε διαφορετικά API)
+  let remove;
+  try {
+    if (typeof ShareMenu.addNewShareListener === "function") {
+      const sub = ShareMenu.addNewShareListener(run);
+      remove = () => sub?.remove?.();
+    } else if (typeof ShareMenu.addListener === "function") {
+      // μερικές εκδόσεις εκθέτουν generic addListener
+      const sub = ShareMenu.addListener("ShareReceived", run);
+      remove = () => sub?.remove?.();
+    } else if (typeof ShareMenu.addShareListener === "function") {
+      // fallback ονομασία
+      const sub = ShareMenu.addShareListener(run);
+      remove = () => sub?.remove?.();
+    } else {
+      // Δεν υπάρχει υποστηριζόμενος listener API — απλά μην κάνεις subscribe
+      remove = undefined;
+      console.warn("[ShareMenu] No listener API available in this environment.");
+    }
+  } catch (e) {
+    console.warn("[ShareMenu] Listener attach failed:", e?.message);
+  }
 
+  return () => { try { remove?.(); } catch {} };
+}, [chatId, myEmail, uid]);
+
+
+  // ------- Actions -------
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -512,9 +575,10 @@ export default function ChatScreen({ route }) {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images, // <-- FIX
-        quality: 0.92,
+        mediaTypes: MEDIA_IMAGES,
+        quality: 0.8,
         base64: false,
+        selectionLimit: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
 
@@ -556,9 +620,10 @@ export default function ChatScreen({ route }) {
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos, // <-- FIX
+        mediaTypes: MEDIA_VIDEOS,
         quality: 1,
         base64: false,
+        selectionLimit: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
 
@@ -600,7 +665,6 @@ export default function ChatScreen({ route }) {
       if (ok) await Linking.openURL(clean);
       else Alert.alert("Cannot open link", clean);
     } catch (e) {
-      console.error("openURL error", e);
       Alert.alert("Cannot open link", url ?? "");
     }
   };
@@ -613,7 +677,6 @@ export default function ChatScreen({ route }) {
   // Render data: κρατάμε asc στο state, αλλά στο render κάνουμε reverse
   // ώστε με inverted FlatList το «κάτω» να είναι πάντα το νεότερο.
   const renderData = useMemo(() => {
-    // με separators ανά ημέρα
     const asc = messages;
     const out = [];
     let lastDay = null;
@@ -658,10 +721,7 @@ export default function ChatScreen({ route }) {
         keyboardShouldPersistTaps="handled"
         maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
         onEndReachedThreshold={0.15}
-        onEndReached={() => {
-          // inverted: onEndReached όταν φτάνουμε «πάνω» οπτικά -> φέρε παλιότερα
-          loadOlder();
-        }}
+        onEndReached={loadOlder} // inverted: πάμε «πάνω» => φέρε παλιότερα
         ListFooterComponent={
           loadingOlder ? (
             <View style={{ paddingVertical: 8 }}>
@@ -752,7 +812,7 @@ const styles = StyleSheet.create({
   },
 
   messageText: { fontSize: 16, color: "#111827" },
-  linkText: { textDecorationLine: "underline" },
+  linkText: { textDecorationLine: "underline", color: Platform.OS === "ios" ? "#0a84ff" : "#1d4ed8" },
 
   time: { fontSize: 11, marginTop: 6, alignSelf: "flex-end", opacity: 0.75 },
   timeMine: { color: "rgba(255,255,255,0.9)" },

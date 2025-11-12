@@ -4,9 +4,19 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Platform, View } from "react-native";
+import { ActivityIndicator, NativeModules, Platform, View } from "react-native";
 import 'react-native-gesture-handler';
 import { auth, db } from "./firebaseConfig";
+if (Platform.OS === "android") {
+  const M = NativeModules?.ShareMenu;
+  // Παλαιότερες εκδόσεις δεν εκθέτουν αυτά τα methods -> RN βγάζει warnings
+  if (M && !M.addListener) {
+    M.addListener = () => {};
+  }
+  if (M && !M.removeListeners) {
+    M.removeListeners = () => {};
+  }
+}
 
 // Screens
 import AdminScreen from "./screens/AdminScreen";
@@ -24,6 +34,11 @@ import TeachersScreen from "./screens/TeachersScreen";
 // Components
 import Header from "./components/Header";
 
+const { ShareMenuModule } = NativeModules;
+if (Platform.OS === "android" && ShareMenuModule) {
+  if (!ShareMenuModule.addListener) ShareMenuModule.addListener = () => {};
+  if (!ShareMenuModule.removeListeners) ShareMenuModule.removeListeners = () => {};
+}
 const Stack = createNativeStackNavigator();
 
 // ❗ Lazy, safe import για ShareMenu
