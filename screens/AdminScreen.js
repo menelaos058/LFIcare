@@ -10,12 +10,10 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
-  FlatList,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
-  View,
+  View
 } from "react-native";
 import { db } from "../firebaseConfig";
 
@@ -307,103 +305,7 @@ export default function AdminScreen({ route }) {
     [editingTeacherId]
   );
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Admin Panel</Text>
-
-      {/* Program Form */}
-      <Text style={styles.sectionTitle}>{programFormTitle}</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Program Title"
-        value={programTitle}
-        onChangeText={setProgramTitle}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Program Description"
-        value={programDescription}
-        onChangeText={setProgramDescription}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Program Price (€)"
-        value={programPrice}
-        onChangeText={setProgramPrice}
-        keyboardType="numeric"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Teacher Email"
-        value={programTeacherEmail}
-        onChangeText={setProgramTeacherEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-      <TouchableOpacity
-        style={styles.button}
-        onPress={editingProgramId ? saveProgram : addProgram}
-      >
-        <Text style={styles.buttonText}>
-          {editingProgramId ? "Save Program" : "Add Program"}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Programs List */}
-      <FlatList
-        data={programs}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <ProgramActions item={item} />}
-        ListEmptyComponent={<Text style={styles.empty}>No programs.</Text>}
-      />
-
-      {/* Teacher Form */}
-      <Text style={styles.sectionTitle}>{teacherFormTitle}</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Name"
-        value={teacherName}
-        onChangeText={setTeacherName}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={teacherEmail}
-        onChangeText={setTeacherEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Phone"
-        value={teacherPhone}
-        onChangeText={setTeacherPhone}
-        keyboardType="phone-pad"
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Description"
-        value={teacherDescription}
-        onChangeText={setTeacherDescription}
-      />
-      <TouchableOpacity
-        style={styles.button}
-        onPress={editingTeacherId ? saveTeacher : addTeacher}
-      >
-        <Text style={styles.buttonText}>
-          {editingTeacherId ? "Save Teacher" : "Add Teacher"}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Teachers List */}
-      <FlatList
-        data={teachers}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <TeacherActions item={item} />}
-        ListEmptyComponent={<Text style={styles.empty}>No teachers.</Text>}
-      />
-    </View>
-  );
+  
 }
 
 const styles = StyleSheet.create({

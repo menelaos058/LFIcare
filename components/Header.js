@@ -50,7 +50,7 @@ const Header = ({ user, setUser }) => {
         { label: "Home", screen: "Home" },
         { label: "Programs", screen: "Programs" },
         { label: "Teachers", screen: "Teachers" },
-        { label: "Admin Panel", screen: "Admin", variant: "admin" },
+        
         { label: "Log Out", action: handleLogout, variant: "danger" },
       ];
     } else if (user) {
