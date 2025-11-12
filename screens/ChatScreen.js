@@ -1,5 +1,8 @@
 // screens/ChatScreen.js
+import Constants from "expo-constants";
+import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
+import * as MediaLibrary from "expo-media-library";
 import {
   addDoc,
   collection,
@@ -12,8 +15,12 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
+} from "firebase/storage";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -27,33 +34,19 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from "react-native";
+import ImageViewing from "react-native-image-viewing";
 import ParsedText from "react-native-parsed-text";
 import { auth, db, functions, storage } from "../firebaseConfig";
 
-// ------------------------ CONFIG ------------------------
+/* ========================= Config ========================= */
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
-const PAGE_SIZE = 25;       // πόσα παλιότερα φορτώνουμε ανά «σελίδα»
-const LIVE_LIMIT = 50;      // πόσα κρατά ζωντανά ο listener
+const PAGE_SIZE = 25;
+const LIVE_LIMIT = 50;
 
-// Lazy require για ShareMenu (Android only) ώστε να αποφύγουμε NativeEventEmitter warnings
-const getShareMenu = () => {
-  if (Platform.OS !== "android") return null;
-  try {
-    // eslint-disable-next-line global-require
-    return require("react-native-share-menu");
-  } catch {
-    return null;
-  }
-};
-
-// --------------------- MEDIA TYPES (Picker) ---------------------
-const MEDIA_ARRAY_SUPPORTED = !!ImagePicker.MediaType?.Images;
-const MEDIA_IMAGES = MEDIA_ARRAY_SUPPORTED ? [ImagePicker.MediaType.Images] : undefined;
-const MEDIA_VIDEOS = MEDIA_ARRAY_SUPPORTED ? [ImagePicker.MediaType.Videos] : undefined;
-
-// ------------------------ HELPERS ------------------------
+/* ========================= Utils ========================= */
 const guessExtFromMime = (mime = "") => {
   const m = (mime || "").toLowerCase();
   if (m.includes("png")) return "png";
@@ -70,7 +63,7 @@ const guessExtFromMime = (mime = "") => {
   return "bin";
 };
 
-// ====== URL Utils / Previews ======
+// --- Link preview helpers (OG + YouTube thumbnail fallback) ---
 const YT_PATTERNS = [
   /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([\w-]{6,})/i,
   /(?:https?:\/\/)?(?:www\.)?youtube\.com\/shorts\/([\w-]{6,})/i,
@@ -83,8 +76,6 @@ const extractYouTubeId = (url) => {
   }
   return null;
 };
-
-// Lightweight OG fetch + YouTube fallback thumbnail
 async function fetchOg(url) {
   try {
     const res = await fetch(url, { method: "GET", headers: { Accept: "text/html" } });
@@ -114,50 +105,30 @@ async function fetchOg(url) {
     return { title, desc, image };
   } catch {
     const vid = extractYouTubeId(url);
-    if (vid) {
-      return {
-        title: "YouTube",
-        desc: "",
-        image: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-      };
-    }
+    if (vid) return { title: "YouTube", desc: "", image: `https://img.youtube.com/vi/${vid}/hqdefault.jpg` };
     return { title: url, desc: "", image: null };
   }
 }
-
-function LinkPreviewCard({ url, onPress }) {
+const LinkPreviewCard = React.memo(({ url, onPress }) => {
   const [data, setData] = useState(null);
-  const mounted = useRef(true);
-
   useEffect(() => {
-    mounted.current = true;
-    fetchOg(url).then((d) => mounted.current && setData(d));
-    return () => { mounted.current = false; };
+    let alive = true;
+    fetchOg(url).then((d) => alive && setData(d));
+    return () => { alive = false; };
   }, [url]);
-
   return (
-    <Pressable onPress={() => onPress(url)} style={styles.card}>
-      {data?.image ? (
-        <Image source={{ uri: data.image }} style={styles.cardImageLarge} />
-      ) : null}
+    <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
+      {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImageLarge} /> : null}
       <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}>
-        <Text numberOfLines={1} style={styles.cardTitle}>
-          {data?.title || url}
-        </Text>
-        {!!data?.desc && (
-          <Text numberOfLines={2} style={styles.cardDesc}>
-            {data.desc}
-          </Text>
-        )}
-        <Text numberOfLines={1} style={styles.cardUrl}>
-          {url}
-        </Text>
+        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
+        {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
+        <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
       </View>
-    </Pressable>
+    </TouchableOpacity>
   );
-}
+});
 
-/** Upload οποιουδήποτε uri (content://, file://) στο Storage. Επιστρέφει storagePath. */
+// Storage upload
 async function uploadUriToStorage({ uri, mime, storagePath }) {
   const res = await fetch(uri);
   const blob = await res.blob();
@@ -166,44 +137,60 @@ async function uploadUriToStorage({ uri, mime, storagePath }) {
   return storagePath;
 }
 
-/** Short-lived signed URL για ένα storagePath με fallback σε getDownloadURL */
-async function getSignedUrlWithRetry(storagePath, tries = 5, delayMs = 300) {
+// Signed URL (Cloud Function) ή fallback σε getDownloadURL (και τα δύο με retries)
+async function getSignedOrDownloadURL(storagePath, tries = 5, delayMs = 240) {
+  const ref = storageRef(storage, storagePath);
+
   for (let i = 0; i < tries; i++) {
+    // 1) Cloud Function (signed URL)
     try {
       const callable = httpsCallable(functions, "chat_getSignedUrl");
       const { data } = await callable({ storagePath });
       if (data?.url) return data.url;
       throw new Error("no-url");
     } catch (e) {
-      const msg = String(e?.message || "").toLowerCase();
-      const temporary = msg.includes("not-found") || msg.includes("no-url");
-      if (i < tries - 1 && temporary) {
-        await new Promise(r => setTimeout(r, delayMs * Math.pow(2, i)));
-        continue;
-      }
-      // Fallback σε direct GCS URL (αν το επιτρέπουν οι κανόνες)
-      try {
-        const ref = storageRef(storage, storagePath);
-        const direct = await getDownloadURL(ref);
-        return direct;
-      } catch {
-        return null;
+      const transientMsg = String(e?.message || "").toLowerCase();
+      const shouldRetryCF = transientMsg.includes("not-found") || transientMsg.includes("no-url");
+      if (!shouldRetryCF) {
+        // αν είναι άλλο error, προχώρα σε fallback χωρίς να σταματήσεις το loop
       }
     }
+
+    // 2) Fallback: Storage getDownloadURL (απαιτεί να περνάς τους κανόνες σου — που περνάς ως μέλος chat)
+    try {
+      const url = await getDownloadURL(ref);
+      if (url) return url;
+    } catch {
+      // πιθανό race αμέσως μετά το upload -> retry
+    }
+
+    if (i < tries - 1) {
+      await new Promise((r) => setTimeout(r, delayMs * Math.pow(1.7, i)));
+    }
   }
+
+  return null; // τελική αποτυχία, σιωπηλά δεν εμφανίζουμε media
+}
+
+/* ========================= Share (Android) ========================= */
+const isExpoGo = Constants?.appOwnership === "expo";
+function getShareMenu() {
+  if (Platform.OS !== "android" || isExpoGo) return null;
   try {
-    const ref = storageRef(storage, storagePath);
-    return await getDownloadURL(ref);
+    const mod = require("react-native-share-menu");
+    const hasAny =
+      typeof mod?.getInitialShare === "function" ||
+      typeof mod?.getSharedText === "function" ||
+      typeof mod?.addNewShareListener === "function" ||
+      typeof mod?.addListener === "function" ||
+      typeof mod?.addShareListener === "function";
+    return hasAny ? mod : null;
   } catch {
     return null;
   }
 }
-
-/** Incoming share (text/image/video/file/multiple) */
 async function handleIncomingShare({ chatId, myEmail, item, uid }) {
   if (!chatId || !myEmail || !item || !uid) return;
-
-  // Text
   if (item.mimeType?.startsWith("text/")) {
     const text = (item.data || "").trim();
     if (!text) return;
@@ -215,16 +202,12 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     });
     return;
   }
-
-  // Image
   if (item.mimeType?.startsWith("image/") && item.data) {
-    const uri = item.data;
     const mime = item.mimeType || "image/jpeg";
     const ext = guessExtFromMime(mime);
     const fileId = `${Date.now()}.${ext}`;
     const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
-
-    await uploadUriToStorage({ uri, mime, storagePath });
+    await uploadUriToStorage({ uri: item.data, mime, storagePath });
     await addDoc(collection(db, "chats", chatId, "messages"), {
       senderEmail: myEmail,
       media: { type: "image", storagePath, name: fileId, mime },
@@ -232,16 +215,12 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     });
     return;
   }
-
-  // Video
   if (item.mimeType?.startsWith("video/") && item.data) {
-    const uri = item.data;
     const mime = item.mimeType || "video/mp4";
     const ext = guessExtFromMime(mime);
     const fileId = `${Date.now()}.${ext}`;
     const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
-
-    await uploadUriToStorage({ uri, mime, storagePath });
+    await uploadUriToStorage({ uri: item.data, mime, storagePath });
     await addDoc(collection(db, "chats", chatId, "messages"), {
       senderEmail: myEmail,
       media: { type: "video", storagePath, name: fileId, mime },
@@ -249,24 +228,18 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
     });
     return;
   }
-
-  // Multiple
   if (Array.isArray(item.items) && item.items.length) {
     for (const sub of item.items) {
       await handleIncomingShare({ chatId, myEmail, item: sub, uid });
     }
     return;
   }
-
-  // Generic file
   if (item.data) {
-    const uri = item.data;
     const mime = item.mimeType || "application/octet-stream";
     const ext = guessExtFromMime(mime);
     const fileId = `${Date.now()}.${ext}`;
     const storagePath = `chat-media/${chatId}/${uid}/${fileId}`;
-
-    await uploadUriToStorage({ uri, mime, storagePath });
+    await uploadUriToStorage({ uri: item.data, mime, storagePath });
     await addDoc(collection(db, "chats", chatId, "messages"), {
       senderEmail: myEmail,
       media: { type: "file", storagePath, name: fileId, mime },
@@ -275,7 +248,7 @@ async function handleIncomingShare({ chatId, myEmail, item, uid }) {
   }
 }
 
-// ===== Helpers εμφάνισης =====
+/* ========================= Formatting ========================= */
 const dayKeyFromTs = (ts) => {
   if (!ts) return "unknown";
   const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
@@ -297,36 +270,44 @@ const timeLabel = (ts) => {
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 };
 
+/* ========================= Small hooks/components ========================= */
 const useSignedUrlCache = () => {
   const [cache, setCache] = useState({});
   const fetchAndCache = useCallback(async (storagePath) => {
     if (!storagePath) return null;
     if (cache[storagePath]) return cache[storagePath];
-    const url = await getSignedUrlWithRetry(storagePath);
-    setCache((m) => ({ ...m, [storagePath]: url }));
-    return url;
+    const url = await getSignedOrDownloadURL(storagePath);
+    if (url) setCache((m) => ({ ...m, [storagePath]: url }));
+    return url || null;
   }, [cache]);
   return { fetchAndCache };
 };
 
-const Avatar = ({ email }) => {
+const Avatar = React.memo(({ email }) => {
   const letter = (email || "?").slice(0, 1).toUpperCase();
   return (
     <View style={styles.avatar}>
       <Text style={styles.avatarText}>{letter}</Text>
     </View>
   );
-};
+});
 
-const DaySeparator = ({ label }) => (
+const DaySeparator = React.memo(({ label }) => (
   <View style={styles.dayWrap}>
     <View style={styles.dayLine} />
     <Text style={styles.dayText}>{label}</Text>
     <View style={styles.dayLine} />
   </View>
-);
+));
 
-function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
+const MessageBubble = React.memo(function MessageBubble({
+  msg,
+  myEmail,
+  onPressLink,
+  openUrl,
+  fetchSigned,
+  onPressImage,
+}) {
   const isMine =
     myEmail && typeof msg.senderEmail === "string"
       ? msg.senderEmail.toLowerCase() === myEmail
@@ -337,20 +318,18 @@ function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        if (msg?.media?.storagePath) {
-          const url = await fetchSigned(msg.media.storagePath);
-          if (alive) setSigned(url);
-        } else setSigned(null);
-      } catch (e) {
-        // swallow
+      if (!msg?.media?.storagePath) {
+        if (alive) setSigned(null);
+        return;
       }
+      const url = await fetchSigned(msg.media.storagePath);
+      if (alive) setSigned(url); // μπορεί να είναι null αν όλα αποτύχουν
     })();
     return () => { alive = false; };
   }, [msg?.media?.storagePath, fetchSigned]);
 
   const screenW = Dimensions.get("window").width;
-  const imgSize = Math.min(420, Math.floor(screenW * 0.78));
+  const imgSize = Math.min(420, Math.floor(screenW * 0.80));
 
   return (
     <View style={[styles.row, isMine ? styles.rowMine : styles.rowOther]}>
@@ -368,30 +347,35 @@ function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
         )}
 
         {!!msg.link && (
-          <View style={{ marginTop: msg.text ? 8 : 0, maxWidth: 420 }}>
+          <View style={{ marginTop: msg.text ? 8 : 0, maxWidth: 440 }}>
             <LinkPreviewCard url={msg.link} onPress={onPressLink} />
           </View>
         )}
 
         {msg.media?.type === "image" && signed && (
-          <Image
-            source={{ uri: signed }}
-            style={{ width: imgSize, height: imgSize, borderRadius: 14, marginTop: 6 }}
-          />
+          <Pressable
+            onPress={() => onPressImage(signed)}
+            style={{ marginTop: 6, borderRadius: 14, overflow: "hidden" }}
+          >
+            <Image
+              source={{ uri: signed }}
+              style={{ width: imgSize, height: imgSize, borderRadius: 14 }}
+            />
+          </Pressable>
         )}
 
         {msg.media?.type === "video" && signed && (
-          <Pressable onPress={() => openUrl(signed)} style={styles.fileCard}>
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
             <Text style={styles.fileTitle}>🎬 Open video</Text>
             <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-          </Pressable>
+          </TouchableOpacity>
         )}
 
         {msg.media?.type === "file" && signed && (
-          <Pressable onPress={() => openUrl(signed)} style={styles.fileCard}>
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
             <Text style={styles.fileTitle}>📎 {msg.media.name || "Open file"}</Text>
             <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
-          </Pressable>
+          </TouchableOpacity>
         )}
 
         <Text style={[styles.time, isMine ? styles.timeMine : styles.timeOther]}>
@@ -400,8 +384,16 @@ function MessageBubble({ msg, myEmail, onPressLink, openUrl, fetchSigned }) {
       </View>
     </View>
   );
-}
+}, (a, b) =>
+  a.msg?.id === b.msg?.id &&
+  a.msg?.text === b.msg?.text &&
+  a.msg?.link === b.msg?.link &&
+  a.msg?.media?.storagePath === b.msg?.media?.storagePath &&
+  a.msg?.timestamp?.seconds === b.msg?.timestamp?.seconds &&
+  a.myEmail === b.myEmail
+);
 
+/* ========================= Main Screen ========================= */
 export default function ChatScreen({ route }) {
   const { chatId, programTitle } = route?.params ?? {};
   const [messages, setMessages] = useState([]); // ascending
@@ -410,6 +402,11 @@ export default function ChatScreen({ route }) {
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Full-screen viewer state
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerImage, setViewerImage] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const currentUser = auth.currentUser;
   const myEmail = useMemo(
@@ -420,8 +417,10 @@ export default function ChatScreen({ route }) {
 
   const { fetchAndCache } = useSignedUrlCache();
   const listRef = useRef(null);
+  const firstLiveBatch = useRef(true);
+  const loadOlderDebounce = useRef(0);
 
-  // ====== LIVE LISTENER (τελευταία LIVE_LIMIT σε ascending) ======
+  // Live listener (τελευταία LIVE_LIMIT asc)
   useEffect(() => {
     if (!chatId) return;
     const liveQ = query(
@@ -435,22 +434,36 @@ export default function ChatScreen({ route }) {
         const arr = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
         setMessages(arr);
         setHasMore(true);
+
+        // Στο πρώτο batch μπαίνουμε τέρμα κάτω
+        if (firstLiveBatch.current) {
+          firstLiveBatch.current = false;
+          setTimeout(() => {
+            listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+          }, 30);
+        }
       },
       (err) => {
         console.error("Messages subscribe error:", err);
         Alert.alert("Error", err.message);
       }
     );
-    return () => unsub();
+    return () => {
+      firstLiveBatch.current = true;
+      unsub();
+    };
   }, [chatId]);
 
-  // ====== Load older (asc + endBefore(oldest) + limitToLast) ======
+  // Φόρτωση παλαιότερων (asc + endBefore(oldest) + limitToLast)
   const loadOlder = useCallback(async () => {
+    const now = Date.now();
+    if (now - loadOlderDebounce.current < 400) return; // debounce
+    loadOlderDebounce.current = now;
+
     if (!chatId || loadingOlder || !hasMore || messages.length === 0) return;
     try {
       setLoadingOlder(true);
-      const oldest = messages[0];
-      const oldestTs = oldest?.timestamp;
+      const oldestTs = messages[0]?.timestamp;
       if (!oldestTs) { setLoadingOlder(false); return; }
 
       const olderQ = query(
@@ -463,10 +476,9 @@ export default function ChatScreen({ route }) {
       const got = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       if (got.length === 0) {
         setHasMore(false);
-        setLoadingOlder(false);
-        return;
+      } else {
+        setMessages((prev) => [...got, ...prev]);
       }
-      setMessages((prev) => [...got, ...prev]);
     } catch (e) {
       console.error("Load older failed:", e);
     } finally {
@@ -475,72 +487,53 @@ export default function ChatScreen({ route }) {
   }, [chatId, messages, hasMore, loadingOlder]);
 
   const scrollToBottom = (animated = true) => {
-    // inverted list -> bottom οπτικά = offset 0
     listRef.current?.scrollToOffset?.({ offset: 0, animated });
   };
 
-  // Android Share
- // Android Share (συμβατό με διάφορες εκδόσεις/περιβάλλοντα)
-useEffect(() => {
-  const ShareMenu = getShareMenu();
-  if (!ShareMenu) return;
+  // Android share integration (σιωπηλό όταν δεν υπάρχει)
+  useEffect(() => {
+    const ShareMenu = getShareMenu();
+    if (!ShareMenu) return;
 
-  const run = (item) => {
-    if (!item) return;
-    if (!chatId || !myEmail || !uid) return;
-    setLoading(true);
-    handleIncomingShare({ chatId, myEmail, item, uid })
-      .catch((e) => {
-        console.error("Share handling failed:", e);
-        Alert.alert("Share error", e?.message ?? "Failed to import shared content.");
-      })
-      .finally(() => {
-        setLoading(false);
-        setTimeout(() => scrollToBottom(true), 60);
-      });
-  };
+    const run = (item) => {
+      if (!item || !chatId || !myEmail || !uid) return;
+      setLoading(true);
+      handleIncomingShare({ chatId, myEmail, item, uid })
+        .finally(() => {
+          setLoading(false);
+          setTimeout(() => scrollToBottom(true), 60);
+        });
+    };
 
-  // 1) Αρχικά δεδομένα (ανάλογα τι διατίθεται)
-  try {
-    if (typeof ShareMenu.getInitialShare === "function") {
-      const maybe = ShareMenu.getInitialShare(run);
-      if (maybe?.then) maybe.then(run).catch(() => {});
-    } else if (typeof ShareMenu.getSharedText === "function") {
-      // παλαιότερο API
-      ShareMenu.getSharedText().then((text) => {
-        if (text) run({ mimeType: "text/plain", data: String(text) });
-      }).catch(() => {});
-    }
-  } catch {}
+    try {
+      if (typeof ShareMenu.getInitialShare === "function") {
+        const maybe = ShareMenu.getInitialShare(run);
+        if (maybe?.then) maybe.then(run).catch(() => {});
+      } else if (typeof ShareMenu.getSharedText === "function") {
+        ShareMenu.getSharedText().then((text) => {
+          if (text) run({ mimeType: "text/plain", data: String(text) });
+        }).catch(() => {});
+      }
+    } catch {}
 
-  // 2) Live listener (δοκίμασε διαφορετικά API)
-  let remove;
-  try {
-    if (typeof ShareMenu.addNewShareListener === "function") {
-      const sub = ShareMenu.addNewShareListener(run);
-      remove = () => sub?.remove?.();
-    } else if (typeof ShareMenu.addListener === "function") {
-      // μερικές εκδόσεις εκθέτουν generic addListener
-      const sub = ShareMenu.addListener("ShareReceived", run);
-      remove = () => sub?.remove?.();
-    } else if (typeof ShareMenu.addShareListener === "function") {
-      // fallback ονομασία
-      const sub = ShareMenu.addShareListener(run);
-      remove = () => sub?.remove?.();
-    } else {
-      // Δεν υπάρχει υποστηριζόμενος listener API — απλά μην κάνεις subscribe
-      remove = undefined;
-      console.warn("[ShareMenu] No listener API available in this environment.");
-    }
-  } catch (e) {
-    console.warn("[ShareMenu] Listener attach failed:", e?.message);
-  }
+    let remove;
+    try {
+      if (typeof ShareMenu.addNewShareListener === "function") {
+        const sub = ShareMenu.addNewShareListener(run);
+        remove = () => sub?.remove?.();
+      } else if (typeof ShareMenu.addListener === "function") {
+        const sub = ShareMenu.addListener("ShareReceived", run);
+        remove = () => sub?.remove?.();
+      } else if (typeof ShareMenu.addShareListener === "function") {
+        const sub = ShareMenu.addShareListener(run);
+        remove = () => sub?.remove?.();
+      }
+    } catch {}
 
-  return () => { try { remove?.(); } catch {} };
-}, [chatId, myEmail, uid]);
+    return () => { try { remove?.(); } catch {} };
+  }, [chatId, myEmail, uid]);
 
-
-  // ------- Actions -------
+  /* ----------------- Senders ----------------- */
   const sendMessage = async () => {
     const text = input.trim();
     if (!text) return;
@@ -556,37 +549,35 @@ useEffect(() => {
         timestamp: serverTimestamp(),
       });
       setInput("");
-      setTimeout(() => scrollToBottom(true), 60);
+      setTimeout(() => scrollToBottom(true), 50);
     } catch (error) {
-      console.error("Message send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send message.");
     }
   };
 
+  // ΠΑΝΤΑ χρήση του νέου API
+  const Media = useMemo(() => {
+    const M = ImagePicker.MediaType;
+    if (M && typeof M.Images === "string") return M;
+    return { Images: "images", Videos: "videos", All: "all" };
+  }, []);
+
   const pickImage = async () => {
-    if (!chatId || !myEmail || !uid) {
-      Alert.alert("Error", "Not authenticated or no chat selected.");
-      return;
-    }
+    if (!chatId || !myEmail || !uid) return Alert.alert("Error", "Not authenticated or no chat selected.");
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert("Permission needed", "Please allow photo library access.");
-        return;
-      }
+      if (!perm.granted) return Alert.alert("Permission needed", "Please allow photo library access.");
+
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: MEDIA_IMAGES,
-        quality: 0.8,
+        mediaTypes: Media.Images,
+        quality: 0.95,
         base64: false,
         selectionLimit: 1,
       });
       if (result.canceled || !result.assets?.[0]) return;
 
       setLoading(true);
-
       const asset = result.assets[0];
-      if (!asset.uri) throw new Error("No asset uri from picker");
-
       const mime = asset.mimeType || "image/jpeg";
       const ext = guessExtFromMime(mime);
       const fileId = `${Date.now()}.${ext}`;
@@ -599,9 +590,8 @@ useEffect(() => {
         timestamp: serverTimestamp(),
       });
 
-      setTimeout(() => scrollToBottom(true), 60);
+      setTimeout(() => scrollToBottom(true), 50);
     } catch (error) {
-      console.error("Image send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send image.");
     } finally {
       setLoading(false);
@@ -609,18 +599,13 @@ useEffect(() => {
   };
 
   const pickVideo = async () => {
-    if (!chatId || !myEmail || !uid) {
-      Alert.alert("Error", "Not authenticated or no chat selected.");
-      return;
-    }
+    if (!chatId || !myEmail || !uid) return Alert.alert("Error", "Not authenticated or no chat selected.");
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert("Permission needed", "Please allow photo library access.");
-        return;
-      }
+      if (!perm.granted) return Alert.alert("Permission needed", "Please allow photo library access.");
+
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: MEDIA_VIDEOS,
+        mediaTypes: Media.Videos,
         quality: 1,
         base64: false,
         selectionLimit: 1,
@@ -628,10 +613,7 @@ useEffect(() => {
       if (result.canceled || !result.assets?.[0]) return;
 
       setLoading(true);
-
       const asset = result.assets[0];
-      if (!asset.uri) throw new Error("No asset uri from picker");
-
       const mime = asset.mimeType || "video/mp4";
       const ext = guessExtFromMime(mime);
       const fileId = `${Date.now()}.${ext}`;
@@ -644,38 +626,45 @@ useEffect(() => {
         timestamp: serverTimestamp(),
       });
 
-      setTimeout(() => scrollToBottom(true), 60);
+      setTimeout(() => scrollToBottom(true), 50);
     } catch (error) {
-      console.error("Video send failed:", error);
       Alert.alert("Error", error?.message ?? "Failed to send video.");
     } finally {
       setLoading(false);
     }
   };
 
-  const onPressLink = async (url) => {
+  /* ----------------- Full-screen viewer ----------------- */
+  const openViewer = useCallback((url) => {
+    setViewerImage(url);
+    setViewerVisible(true);
+  }, []);
+
+  const saveCurrentImage = useCallback(async () => {
+    if (!viewerImage) return;
     try {
-      const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
-      if (!clean) return;
-      if (/^https?:\/\//i.test(clean)) {
-        await Linking.openURL(clean);
+      setSaving(true);
+      // άδεια για write σε gallery
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Please allow media library access to save the image.");
+        setSaving(false);
         return;
       }
-      const ok = await Linking.canOpenURL(clean);
-      if (ok) await Linking.openURL(clean);
-      else Alert.alert("Cannot open link", clean);
+      // κατέβασμα σε προσωρινό φάκελο
+      const filename = `chat-${Date.now()}.jpg`;
+      const dest = FileSystem.cacheDirectory + filename;
+      const { uri } = await FileSystem.downloadAsync(viewerImage, dest);
+      await MediaLibrary.saveToLibraryAsync(uri);
+      Alert.alert("Saved", "Image saved to your gallery.");
     } catch (e) {
-      Alert.alert("Cannot open link", url ?? "");
+      Alert.alert("Save failed", e?.message ?? "Could not save image.");
+    } finally {
+      setSaving(false);
     }
-  };
+  }, [viewerImage]);
 
-  const openUrl = async (url) => {
-    try { await Linking.openURL(url); }
-    catch { Alert.alert("Cannot open", url); }
-  };
-
-  // Render data: κρατάμε asc στο state, αλλά στο render κάνουμε reverse
-  // ώστε με inverted FlatList το «κάτω» να είναι πάντα το νεότερο.
+  /* ----------------- Render model ----------------- */
   const renderData = useMemo(() => {
     const asc = messages;
     const out = [];
@@ -689,9 +678,34 @@ useEffect(() => {
       }
       out.push({ type: "msg", id: m.id, data: m });
     }
-    // reverse για inverted
     return out.slice().reverse();
   }, [messages]);
+
+  const keyExtractor = useCallback((item) => item.id, []);
+  const renderItem = useCallback(
+    ({ item }) =>
+      item.type === "day" ? (
+        <DaySeparator label={item.label} />
+      ) : (
+        <MessageBubble
+          msg={item.data}
+          myEmail={myEmail}
+          onPressLink={(url) => {
+            const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
+            if (!clean) return;
+            /^https?:\/\//i.test(clean)
+              ? Linking.openURL(clean).catch(() => Alert.alert("Cannot open link", clean))
+              : Linking.canOpenURL(clean)
+                  .then((ok) => (ok ? Linking.openURL(clean) : Alert.alert("Cannot open link", clean)))
+                  .catch(() => Alert.alert("Cannot open link", clean));
+          }}
+          openUrl={(u) => Linking.openURL(u).catch(() => Alert.alert("Cannot open", u))}
+          fetchSigned={fetchAndCache}
+          onPressImage={openViewer}
+        />
+      ),
+    [myEmail, fetchAndCache, openViewer]
+  );
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -703,32 +717,19 @@ useEffect(() => {
         ref={listRef}
         data={renderData}
         inverted
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) =>
-          item.type === "day" ? (
-            <DaySeparator label={item.label} />
-          ) : (
-            <MessageBubble
-              msg={item.data}
-              myEmail={myEmail}
-              onPressLink={onPressLink}
-              openUrl={openUrl}
-              fetchSigned={fetchAndCache}
-            />
-          )
-        }
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
         contentContainerStyle={{ padding: 12, paddingTop: 6 }}
         keyboardShouldPersistTaps="handled"
         maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
-        onEndReachedThreshold={0.15}
-        onEndReached={loadOlder} // inverted: πάμε «πάνω» => φέρε παλιότερα
-        ListFooterComponent={
-          loadingOlder ? (
-            <View style={{ paddingVertical: 8 }}>
-              <ActivityIndicator />
-            </View>
-          ) : null
-        }
+        onEndReachedThreshold={0.12}
+        onEndReached={loadOlder}
+        ListFooterComponent={loadingOlder ? <View style={{ paddingVertical: 8 }}><ActivityIndicator /></View> : null}
+        // perf tuning (βοηθά και με το warning του VirtualizedList)
+        initialNumToRender={18}
+        maxToRenderPerBatch={12}
+        windowSize={7}
+        removeClippedSubviews
       />
 
       {loading && (
@@ -755,7 +756,7 @@ useEffect(() => {
             autoCapitalize="none"
             autoCorrect={false}
             multiline
-            onFocus={() => setTimeout(() => scrollToBottom(true), 60)}
+            onFocus={() => setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 40)}
           />
         </View>
 
@@ -763,10 +764,26 @@ useEffect(() => {
           <Text style={styles.sendBtnText}>➤</Text>
         </Pressable>
       </View>
+
+      {/* Full-screen viewer with Save button */}
+      <ImageViewing
+        images={viewerImage ? [{ uri: viewerImage }] : []}
+        imageIndex={0}
+        visible={viewerVisible}
+        onRequestClose={() => setViewerVisible(false)}
+        FooterComponent={() => (
+          <View style={styles.viewerFooter}>
+            <Pressable onPress={saveCurrentImage} style={styles.saveBtn}>
+              {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save</Text>}
+            </Pressable>
+          </View>
+        )}
+      />
     </KeyboardAvoidingView>
   );
 }
 
+/* ========================= Styles ========================= */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F6F7FB" },
 
@@ -800,35 +817,27 @@ const styles = StyleSheet.create({
       android: { elevation: 1 },
     }),
   },
-  bubbleMine: {
-    backgroundColor: "#3B82F6",
-    borderTopRightRadius: 6,
-    alignSelf: "flex-end",
-  },
-  bubbleOther: {
-    backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 6,
-    alignSelf: "flex-start",
-  },
+  bubbleMine: { backgroundColor: "#3B82F6", borderTopRightRadius: 6, alignSelf: "flex-end" },
+  bubbleOther: { backgroundColor: "#FFFFFF", borderTopLeftRadius: 6, alignSelf: "flex-start" },
 
   messageText: { fontSize: 16, color: "#111827" },
-  linkText: { textDecorationLine: "underline", color: Platform.OS === "ios" ? "#0a84ff" : "#1d4ed8" },
+  linkText: { textDecorationLine: "underline" },
 
   time: { fontSize: 11, marginTop: 6, alignSelf: "flex-end", opacity: 0.75 },
   timeMine: { color: "rgba(255,255,255,0.9)" },
   timeOther: { color: "#6B7280" },
 
-  // Link card (με μεγάλη εικόνα πάνω)
+  // Link card
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#eee",
     overflow: "hidden",
-    maxWidth: 420,
+    maxWidth: 440,
     marginTop: 6,
   },
-  cardImageLarge: { width: "100%", height: 200 },
+  cardImageLarge: { width: "100%", height: 220 },
   cardTitle: { fontWeight: "700", color: "#111827" },
   cardDesc: { color: "#4B5563", marginTop: 4, fontSize: 12 },
   cardUrl: { color: "#6B7280", marginTop: 6, fontSize: 12 },
@@ -836,66 +845,57 @@ const styles = StyleSheet.create({
   // file/video card
   fileCard: {
     backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
-    padding: 10,
-    marginTop: 6,
-    maxWidth: 380,
+    borderRadius: 10, borderWidth: 1, borderColor: "#eee",
+    padding: 10, marginTop: 6, maxWidth: 420,
   },
   fileTitle: { fontWeight: "600", marginBottom: 4, color: "#111827" },
   fileUrl: { fontSize: 12, color: "#6B7280" },
 
   // day separator
   dayWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginVertical: 10,
-    paddingHorizontal: 8,
+    flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 10, paddingHorizontal: 8,
   },
   dayLine: { flex: 1, height: 1, backgroundColor: "#E5E7EB" },
   dayText: {
-    fontSize: 12,
-    color: "#6B7280",
-    backgroundColor: "#E5E7EB",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 999,
+    fontSize: 12, color: "#6B7280", backgroundColor: "#E5E7EB",
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999,
   },
 
   // input
   inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-    gap: 8,
+    flexDirection: "row", alignItems: "flex-end",
+    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", gap: 8,
   },
   circleBtn: {
-    width: 38, height: 38, borderRadius: 19,
-    alignItems: "center", justifyContent: "center",
+    width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center",
     backgroundColor: "#F3F4F6", borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB",
   },
   circleBtnText: { fontSize: 18 },
 
   inputWrap: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-    maxHeight: 120,
+    flex: 1, backgroundColor: "#F3F4F6", borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", maxHeight: 120,
   },
   input: { paddingHorizontal: 12, paddingVertical: 8, fontSize: 16 },
 
   sendBtn: {
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: "center", justifyContent: "center",
+    width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center",
     backgroundColor: "#22C55E",
   },
   sendBtnText: { color: "#fff", fontSize: 18, fontWeight: "800", marginLeft: 2 },
+
+  // viewer footer
+  viewerFooter: {
+    paddingBottom: 24,
+    paddingTop: 8,
+    alignItems: "center",
+  },
+  saveBtn: {
+    backgroundColor: "#111827",
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+  },
+  saveBtnText: { color: "#fff", fontWeight: "700" },
 });

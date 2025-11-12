@@ -1,145 +1,84 @@
 // app.config.js
-import 'dotenv/config';
-
-export default ({ config }) => ({
-  ...config,
-
+/** @type {import('@expo/cli').Config} */
+module.exports = {
   name: "LFIcare",
   slug: "lficare",
   scheme: "lficare",
   version: "1.0.0",
-  runtimeVersion: { policy: "sdkVersion" },
   orientation: "portrait",
-
   icon: "./assets/images/icon.png",
+  userInterfaceStyle: "automatic",
   splash: {
     image: "./assets/images/splash.png",
     resizeMode: "contain",
-    backgroundColor: "#ffffff"
+    backgroundColor: "#ffffff",
   },
-
+  updates: {
+    url: "https://u.expo.dev/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", // αν δεν έχεις EAS Update, μπορείς να το αφαιρέσεις
+    checkAutomatically: "ON_LOAD",
+    fallbackToCacheTimeout: 0,
+  },
+  assetBundlePatterns: ["**/*"],
   ios: {
-    bundleIdentifier: "com.menelaos.lficare",
-    buildNumber: "1",
-    supportsTablet: false,
-    deploymentTarget: "15.1",              
+    supportsTablet: true,
+    bundleIdentifier: "com.lficare",
     infoPlist: {
-      NSCameraUsageDescription: "Η κάμερα χρησιμοποιείται για λειτουργίες της εφαρμογής.",
-      NSPhotoLibraryUsageDescription: "Η βιβλιοθήκη φωτογραφιών χρησιμοποιείται για επιλογή/αποστολή εικόνων.",
-      NSPhotoLibraryAddUsageDescription: "Η εφαρμογή χρειάζεται πρόσβαση για αποθήκευση εικόνων."
-    }
+      NSPhotoLibraryUsageDescription: "We need access to your photos to share images in chat.",
+      NSCameraUsageDescription: "We need access to your camera to send photos.",
+      NSMicrophoneUsageDescription:
+        "We need access to your microphone to record videos with sound.",
+    },
   },
-
   android: {
-    package: "com.men.lficare",
+    package: "com.lficare",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
-      backgroundColor: "#ffffff"
+      backgroundColor: "#ffffff",
     },
-    permissions: ["INTERNET", "CAMERA"],
-    jsEngine: "hermes",
+    permissions: [
+      "INTERNET",
+      // Android 13+ granular permissions
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VIDEO",
+      // backwards compatibility
+      "android.permission.READ_EXTERNAL_STORAGE",
+    ],
+    // αν μιλάς με http dev server / emulator
     intentFilters: [
-          {
-            action: "android.intent.action.SEND",
-            categories: ["android.intent.category.DEFAULT"],
-            dataMimeTypes: ["*/*"],
-          },
-          {
-            action: "android.intent.action.SEND_MULTIPLE",
-            categories: ["android.intent.category.DEFAULT"],
-            dataMimeTypes: ["*/*"],
-          },
-        ],
+      {
+        action: "VIEW",
+        data: [{ scheme: "https", host: "lficare.app", pathPrefix: "/" }],
+        category: ["BROWSABLE", "DEFAULT"],
+      },
+    ],
   },
-
-  updates: {
-    enabled: true,
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
-    url: "https://u.expo.dev/b8f57f4d-6894-4dcd-a21b-ddaf2fa2f638"
+  web: {
+    favicon: "./assets/images/favicon.png",
   },
-
   extra: {
-    apiUrl: process.env.EXPO_PUBLIC_API_URL ?? process.env.API_URL,
-    firebase: {
-      apiKey: process.env.EXPO_PUBLIC_FB_API_KEY ?? process.env.FB_API_KEY,
-      appId: process.env.EXPO_PUBLIC_FB_APP_ID ?? process.env.FB_APP_ID,
-      authDomain: process.env.EXPO_PUBLIC_FB_AUTH_DOMAIN ?? process.env.FB_AUTH_DOMAIN,
-      projectId: process.env.EXPO_PUBLIC_FB_PROJECT_ID ?? process.env.FB_PROJECT_ID,
-      storageBucket: process.env.EXPO_PUBLIC_FB_STORAGE_BUCKET ?? process.env.FB_STORAGE_BUCKET,
-      messagingSenderId: process.env.EXPO_PUBLIC_FB_MESSAGING_SENDER_ID ?? process.env.FB_MESSAGING_SENDER_ID
-    },
-    eas: { projectId: process.env.EAS_PROJECT_ID }
+    eas: { projectId: "YOUR-EAS-PROJECT-ID" },
+    // ό,τι public env θέλεις να περάσεις (EXPO_PUBLIC_*)
   },
-
- plugins: [
-  [
-    "expo-build-properties",
-    {
-      android: {
-        compileSdkVersion: 35,
-        targetSdkVersion: 35,
-        buildToolsVersion: "34.0.0",
-        minSdkVersion: 24,
-        kotlinVersion: "1.9.25",
-        javaVersion: "17",
+  plugins: [
+    // κρατάμε μόνο expo plugins που είναι 100% safe
+    "expo-file-system",
+    "expo-image-picker",
+    "expo-media-library",
+    "expo-font",
+    "expo-system-ui",
+    "expo-splash-screen",
+    [
+      "expo-build-properties",
+      {
+        android: {
+          compileSdkVersion: 35,
+          targetSdkVersion: 35,
+          minSdkVersion: 24,
+          kotlinVersion: "1.9.25",
+        },
+        ios: {},
       },
-      ios: {
-        deploymentTarget: "15.1",
-        activationRules: [{ extension: "public.data" }],
-      },
-    },
+    ],
   ],
-  // --- Inline plugin για react-native-share-menu (Android intent-filters) ---
-  (config) => {
-    const { withAndroidManifest } = require("@expo/config-plugins");
-
-    return withAndroidManifest(config, (cfg) => {
-      const manifest = cfg.modResults?.manifest;
-      if (!manifest?.application?.[0]?.activity) return cfg;
-
-      // Βρες MainActivity
-      const activities = manifest.application[0].activity;
-      const mainActivity =
-        activities.find((a) => a.$["android:name"] === ".MainActivity") || activities[0];
-
-      // Βεβαιώσου ότι υπάρχει array intent-filter
-      mainActivity["intent-filter"] = mainActivity["intent-filter"] || [];
-
-      // helper για αποφυγή διπλοεγγραφής
-      const hasIntent = (actionName) =>
-        mainActivity["intent-filter"].some(
-          (f) =>
-            Array.isArray(f.action) &&
-            f.action.some((a) => a.$["android:name"] === actionName)
-        );
-
-      // SEND (*/*)
-      if (!hasIntent("android.intent.action.SEND")) {
-        mainActivity["intent-filter"].push({
-          action: [{ $: { "android:name": "android.intent.action.SEND" } }],
-          category: [{ $: { "android:name": "android.intent.category.DEFAULT" } }],
-          data: [{ $: { "android:mimeType": "*/*" } }],
-        });
-      }
-
-      // SEND_MULTIPLE (*/*)
-      if (!hasIntent("android.intent.action.SEND_MULTIPLE")) {
-        mainActivity["intent-filter"].push({
-          action: [{ $: { "android:name": "android.intent.action.SEND_MULTIPLE" } }],
-          category: [{ $: { "android:name": "android.intent.category.DEFAULT" } }],
-          data: [{ $: { "android:mimeType": "*/*" } }],
-        });
-      }
-
-      return cfg;
-    });
-  },
-
-  "expo-updates",
-],
-
-
-  assetBundlePatterns: ["**/*"]
-});
+};
