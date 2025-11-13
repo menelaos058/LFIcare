@@ -19,7 +19,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { auth, db } from "../firebaseConfig";
+import { auth, db } from "../services/firebaseConfig";
 
 export default function ProfileScreen({ user }) {
   const [loading, setLoading] = useState(false);

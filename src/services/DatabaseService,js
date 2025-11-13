@@ -1,6 +1,6 @@
 // DatabaseService.js
 import { onValue, push, ref } from "firebase/database";
-import { database } from "../firebaseConfig";
+import { database } from "./firebaseConfig";
 
 // Προσθήκη νέου chat message σε ένα room
 export const sendMessage = async (roomId, messageData) => {

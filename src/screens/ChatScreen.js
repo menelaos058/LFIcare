@@ -39,7 +39,7 @@ import {
 } from "react-native";
 import ImageViewing from "react-native-image-viewing";
 import ParsedText from "react-native-parsed-text";
-import { auth, db, functions, storage } from "../firebaseConfig";
+import { auth, db, functions, storage } from "../services/firebaseConfig";
 
 /* ========================= Config ========================= */
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;

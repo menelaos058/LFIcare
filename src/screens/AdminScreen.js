@@ -15,7 +15,7 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import { db } from "../firebaseConfig";
+import { db } from "../services/firebaseConfig";
 
 export default function AdminScreen({ route }) {
   // Αν έρθει user από route (προαιρετικά), τον ελέγχουμε. Το App.js ήδη κρύβει το screen για μη-admin.

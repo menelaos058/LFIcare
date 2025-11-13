@@ -18,7 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { db } from "../firebaseConfig";
+import { db } from "../services/firebaseConfig";
 
 export default function TeachersScreen({ user: initialUser }) {
   const [teachers, setTeachers] = useState([]);

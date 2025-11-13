@@ -2,7 +2,7 @@
 import { addDoc, collection, getDocs, orderBy, query, serverTimestamp, where } from "firebase/firestore";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { auth, db } from "../firebaseConfig";
+import { auth, db } from "../services/firebaseConfig";
 
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
 

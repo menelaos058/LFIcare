@@ -4,7 +4,7 @@ import {
   signInWithEmailAndPassword,
   signOut
 } from "firebase/auth";
-import { auth } from "../firebaseConfig";
+import { auth } from "./firebaseConfig";
 
 /**
  * Register a new user

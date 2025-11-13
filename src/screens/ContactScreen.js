@@ -2,7 +2,7 @@
 import { push, ref } from "firebase/database";
 import { useState } from "react";
 import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { database } from "../firebaseConfig";
+import { database } from "../services/firebaseConfig";
 
 export default function ContactScreen({ user }) {
   const [message, setMessage] = useState("");

@@ -6,7 +6,7 @@ import { doc, onSnapshot } from "firebase/firestore";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, NativeModules, Platform, View } from "react-native";
 import 'react-native-gesture-handler';
-import { auth, db } from "./firebaseConfig";
+import { auth, db } from "./src/services/firebaseConfig";
 if (Platform.OS === "android") {
   const M = NativeModules?.ShareMenu;
   // Παλαιότερες εκδόσεις δεν εκθέτουν αυτά τα methods -> RN βγάζει warnings
@@ -19,20 +19,20 @@ if (Platform.OS === "android") {
 }
 
 // Screens
-import AdminScreen from "./screens/AdminScreen";
-import ChatScreen from "./screens/ChatScreen";
-import ContactScreen from "./screens/ContactScreen";
-import HomeScreen from "./screens/HomeScreen";
-import LoginScreen from "./screens/LoginScreen";
-import MyProgramsScreen from "./screens/MyProgramsScreen";
-import ProfileScreen from "./screens/ProfileScreen";
-import ProgramsScreen from "./screens/ProgramsScreen";
-import RegisterScreen from "./screens/RegisterScreen";
-import ShareSheetScreen from "./screens/ShareSheetScreen";
-import TeachersScreen from "./screens/TeachersScreen";
+import AdminScreen from "./src/screens/AdminScreen";
+import ChatScreen from "./src/screens/ChatScreen";
+import ContactScreen from "./src/screens/ContactScreen";
+import HomeScreen from "./src/screens/HomeScreen";
+import LoginScreen from "./src/screens/LoginScreen";
+import MyProgramsScreen from "./src/screens/MyProgramsScreen";
+import ProfileScreen from "./src/screens/ProfileScreen";
+import ProgramsScreen from "./src/screens/ProgramsScreen";
+import RegisterScreen from "./src/screens/RegisterScreen";
+import ShareSheetScreen from "./src/screens/ShareSheetScreen";
+import TeachersScreen from "./src/screens/TeachersScreen";
 
 // Components
-import Header from "./components/Header";
+import Header from "./src/components/Header";
 
 const { ShareMenuModule } = NativeModules;
 if (Platform.OS === "android" && ShareMenuModule) {

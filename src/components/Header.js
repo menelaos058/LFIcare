@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { logout } from "../services/AuthService";
 
 // Μπορείς να αλλάξεις το path του logo αν χρειάζεται
-const LOGO = require("../assets/images/icon.png");
+const LOGO = require("../../assets/images/icon.png");
 
 const Header = ({ user, setUser }) => {
   const navigation = useNavigation();

@@ -16,7 +16,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { auth, db } from "../firebaseConfig";
+import { auth, db } from "../services/firebaseConfig";
 
 export default function LoginScreen({ navigation, setUser }) {
   const [email, setEmail] = useState("");
