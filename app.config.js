@@ -2,7 +2,8 @@
 /** @type {import('@expo/cli').Config} */
 module.exports = {
   name: "LFIcare",
-  slug: "lficare",
+  slug: "LFIcare",
+  owner: "lamprian", 
   scheme: "lficare",
   version: "1.0.0",
   orientation: "portrait",
@@ -14,14 +15,14 @@ module.exports = {
     backgroundColor: "#ffffff",
   },
   updates: {
-    url: "https://u.expo.dev/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", // αν δεν έχεις EAS Update, μπορείς να το αφαιρέσεις
+    url: "https://u.expo.dev/774fe32f-e4a4-4763-b48e-c6804bc8dff4",
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
   assetBundlePatterns: ["**/*"],
   ios: {
     supportsTablet: true,
-    bundleIdentifier: "com.lficare",
+    bundleIdentifier: "com.men.lficare",
     infoPlist: {
       NSPhotoLibraryUsageDescription: "We need access to your photos to share images in chat.",
       NSCameraUsageDescription: "We need access to your camera to send photos.",
@@ -30,7 +31,7 @@ module.exports = {
     },
   },
   android: {
-    package: "com.lficare",
+    package: "com.men.lficare",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
@@ -57,11 +58,11 @@ module.exports = {
     favicon: "./assets/images/favicon.png",
   },
   extra: {
-    eas: { projectId: "YOUR-EAS-PROJECT-ID" },
-    // ό,τι public env θέλεις να περάσεις (EXPO_PUBLIC_*)
+    eas: { projectId: "774fe32f-e4a4-4763-b48e-c6804bc8dff4" },
+
   },
   plugins: [
-    // κρατάμε μόνο expo plugins που είναι 100% safe
+    
     "expo-file-system",
     "expo-image-picker",
     "expo-media-library",

@@ -27,6 +27,7 @@
     "update:prod": "npx eas update --branch production --message \"prod update\""
   },
   "dependencies": {
+    "@expo/metro-runtime": "~4.0.1",
     "@react-native-async-storage/async-storage": "1.23.1",
     "@react-native-firebase/app": "^23.5.0",
     "@react-native-firebase/storage": "^23.5.0",
