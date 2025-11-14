@@ -1,4 +1,4 @@
-// src/screens/RegisterScreen.js
+// screens/RegisterScreen.js
 import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -13,21 +13,22 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
-import Layout from "../components/Layout";
 import { auth, db } from "../services/firebaseConfig";
-import { useResponsive } from "../theme/responsive";
 
 export default function RegisterScreen({ navigation, setUser }) {
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const cardWidth = Math.min(width - 32, isTablet ? 520 : 360);
+
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-
-  const { s, ms, isLargeScreen } = useResponsive();
 
   const validate = useCallback(() => {
     const trimmedName = name.trim();
@@ -51,10 +52,7 @@ export default function RegisterScreen({ navigation, setUser }) {
       return false;
     }
     if (trimmedPhone && !/^\d{10,15}$/.test(trimmedPhone)) {
-      Alert.alert(
-        "Validation Error",
-        "Please enter a valid phone number (10–15 digits)."
-      );
+      Alert.alert("Validation Error", "Please enter a valid phone number (10–15 digits).");
       return false;
     }
     return true;
@@ -69,11 +67,7 @@ export default function RegisterScreen({ navigation, setUser }) {
 
     setLoading(true);
     try {
-      const { user } = await createUserWithEmailAndPassword(
-        auth,
-        trimmedEmail,
-        password
-      );
+      const { user } = await createUserWithEmailAndPassword(auth, trimmedEmail, password);
 
       await updateProfile(user, { displayName: trimmedName }).catch(() => {});
 
@@ -91,30 +85,20 @@ export default function RegisterScreen({ navigation, setUser }) {
           "Verify your email",
           "We sent you a verification link. Please check your inbox."
         );
-      } catch {
-        // ignore
-      }
+      } catch {}
 
-      setUser?.({
-        uid: user.uid,
-        email: user.email ?? trimmedEmail,
-        role: "user",
-      });
+      setUser?.({ uid: user.uid, email: user.email ?? trimmedEmail, role: "user" });
 
       Alert.alert("Success", "Account created successfully!");
       navigation.navigate("Home");
     } catch (error) {
       console.error(error);
       let message = "Something went wrong.";
-      if (error.code === "auth/email-already-in-use")
-        message = "Email already in use.";
-      else if (error.code === "auth/invalid-email")
-        message = "Invalid email.";
-      else if (error.code === "auth/weak-password")
-        message = "Password should be at least 6 characters.";
+      if (error.code === "auth/email-already-in-use") message = "Email already in use.";
+      else if (error.code === "auth/invalid-email") message = "Invalid email.";
+      else if (error.code === "auth/weak-password") message = "Password should be at least 6 characters.";
       else if (error.code === "permission-denied")
-        message =
-          "Registration blocked by security rules. Please contact support.";
+        message = "Registration blocked by security rules. Please contact support.";
       Alert.alert("Registration Failed", message);
     } finally {
       setLoading(false);
@@ -122,179 +106,101 @@ export default function RegisterScreen({ navigation, setUser }) {
   }, [validate, name, email, phone, password, setUser, navigation]);
 
   return (
-    <Layout>
-      <View
-        style={[
-          styles.container,
-          {
-            padding: s(20),
-          },
-        ]}
-      >
-        <View
-          style={{
-            width: "100%",
-            maxWidth: isLargeScreen ? 480 : 400,
-            alignSelf: "center",
-          }}
-        >
-          <Text
-            style={[
-              styles.title,
-              {
-                fontSize: ms(32),
-                marginBottom: s(28),
-              },
-            ]}
-          >
-            Register
-          </Text>
+    <View style={styles.screen}>
+      <View style={[styles.container, { width: cardWidth }]}>
+        <Text style={styles.title}>Register</Text>
 
-          <TextInput
-            style={[
-              styles.input,
-              {
-                paddingVertical: s(12),
-                paddingHorizontal: s(15),
-                borderRadius: s(8),
-                marginBottom: s(15),
-                fontSize: ms(16),
-              },
-            ]}
-            placeholder="Full Name"
-            value={name}
-            onChangeText={setName}
-            autoCapitalize="words"
-            editable={!loading}
-          />
+        <TextInput
+          style={styles.input}
+          placeholder="Full Name"
+          value={name}
+          onChangeText={setName}
+          autoCapitalize="words"
+          editable={!loading}
+        />
 
-          <TextInput
-            style={[
-              styles.input,
-              {
-                paddingVertical: s(12),
-                paddingHorizontal: s(15),
-                borderRadius: s(8),
-                marginBottom: s(15),
-                fontSize: ms(16),
-              },
-            ]}
-            placeholder="Phone (optional)"
-            value={phone}
-            onChangeText={setPhone}
-            keyboardType="phone-pad"
-            editable={!loading}
-          />
+        <TextInput
+          style={styles.input}
+          placeholder="Phone (optional)"
+          value={phone}
+          onChangeText={setPhone}
+          keyboardType="phone-pad"
+          editable={!loading}
+        />
 
-          <TextInput
-            style={[
-              styles.input,
-              {
-                paddingVertical: s(12),
-                paddingHorizontal: s(15),
-                borderRadius: s(8),
-                marginBottom: s(15),
-                fontSize: ms(16),
-              },
-            ]}
-            placeholder="Email"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!loading}
-          />
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!loading}
+        />
 
-          <TextInput
-            style={[
-              styles.input,
-              {
-                paddingVertical: s(12),
-                paddingHorizontal: s(15),
-                borderRadius: s(8),
-                marginBottom: s(15),
-                fontSize: ms(16),
-              },
-            ]}
-            placeholder="Password"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            editable={!loading}
-          />
+        <TextInput
+          style={styles.input}
+          placeholder="Password"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          editable={!loading}
+        />
 
-          <TextInput
-            style={[
-              styles.input,
-              {
-                paddingVertical: s(12),
-                paddingHorizontal: s(15),
-                borderRadius: s(8),
-                marginBottom: s(15),
-                fontSize: ms(16),
-              },
-            ]}
-            placeholder="Confirm Password"
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            secureTextEntry
-            editable={!loading}
-          />
+        <TextInput
+          style={styles.input}
+          placeholder="Confirm Password"
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry
+          editable={!loading}
+        />
 
-          {loading ? (
-            <ActivityIndicator
-              size="large"
-              color="#007bff"
-              style={{ marginVertical: s(20) }}
-            />
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.button,
-                {
-                  paddingVertical: s(14),
-                  borderRadius: s(8),
-                  marginTop: s(10),
-                },
-              ]}
-              onPress={handleRegister}
-              activeOpacity={0.85}
-            >
-              <Text
-                style={[
-                  styles.buttonText,
-                  { fontSize: ms(18) },
-                ]}
-              >
-                Register
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        {loading ? (
+          <ActivityIndicator size="large" color="#007bff" style={{ marginVertical: 20 }} />
+        ) : (
+          <TouchableOpacity style={styles.button} onPress={handleRegister} activeOpacity={0.85}>
+            <Text style={styles.buttonText}>Register</Text>
+          </TouchableOpacity>
+        )}
       </View>
-    </Layout>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
+    paddingHorizontal: 16,
     justifyContent: "center",
+    alignItems: "center",
     backgroundColor: "#f5f5f5",
   },
-  title: {
-    fontWeight: "bold",
-    textAlign: "center",
+  container: {
+    padding: 20,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
+  title: { fontSize: 28, fontWeight: "bold", marginBottom: 24, textAlign: "center" },
   input: {
     backgroundColor: "#fff",
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+    fontSize: 16,
     borderWidth: 1,
     borderColor: "#ddd",
   },
   button: {
     backgroundColor: "#007bff",
+    paddingVertical: 15,
+    borderRadius: 8,
     alignItems: "center",
+    marginTop: 10,
   },
-  buttonText: { color: "#fff", fontWeight: "600" },
+  buttonText: { color: "#fff", fontWeight: "600", fontSize: 18 },
 });

@@ -1,4 +1,4 @@
-// src/screens/ProfileScreen.js
+// screens/ProfileScreen.js
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,
@@ -17,13 +17,16 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
-import Layout from "../components/Layout";
 import { auth, db } from "../services/firebaseConfig";
-import { useResponsive } from "../theme/responsive";
 
 export default function ProfileScreen({ user }) {
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const cardWidth = Math.min(width - 32, isTablet ? 600 : 420);
+
   const [loading, setLoading] = useState(false);
   const [initialEmail, setInitialEmail] = useState(user?.email || "");
   const [name, setName] = useState("");
@@ -31,8 +34,6 @@ export default function ProfileScreen({ user }) {
   const [phone, setPhone] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
-
-  const { s, ms, isLargeScreen } = useResponsive();
 
   useEffect(() => {
     if (!user) return;
@@ -142,206 +143,132 @@ export default function ProfileScreen({ user }) {
 
   if (!user) {
     return (
-      <Layout>
-        <View style={styles.centered}>
-          <Text>Please log in to see your profile.</Text>
-        </View>
-      </Layout>
+      <View style={styles.centered}>
+        <Text>Please log in to see your profile.</Text>
+      </View>
     );
   }
 
   return (
-    <Layout>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: "#f5f5f5" }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
+        keyboardShouldPersistTaps="handled"
       >
-        <ScrollView
-          contentContainerStyle={[
-            styles.container,
-            {
-              padding: s(20),
-              paddingBottom: s(40),
-            },
-          ]}
-        >
-          <View
-            style={{
-              alignSelf: "center",
-              width: "100%",
-              maxWidth: isLargeScreen ? 520 : 440,
-            }}
-          >
-            <Text
-              style={[
-                styles.title,
-                {
-                  fontSize: ms(28),
-                  marginBottom: s(20),
-                },
-              ]}
-            >
-              Profile
-            </Text>
+        <View style={[styles.card, { width: cardWidth }]}>
+          <Text style={styles.title}>Profile</Text>
 
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  padding: s(12),
-                  borderRadius: s(20),
-                  marginVertical: s(8),
-                  fontSize: ms(16),
-                },
-              ]}
-              placeholder="Name"
-              value={name}
-              onChangeText={setName}
-              editable={!loading}
-            />
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  padding: s(12),
-                  borderRadius: s(20),
-                  marginVertical: s(8),
-                  fontSize: ms(16),
-                },
-              ]}
-              placeholder="Email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              editable={!loading}
-            />
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  padding: s(12),
-                  borderRadius: s(20),
-                  marginVertical: s(8),
-                  fontSize: ms(16),
-                },
-              ]}
-              placeholder="Phone"
-              value={phone}
-              onChangeText={setPhone}
-              keyboardType="phone-pad"
-              editable={!loading}
-            />
+          <TextInput
+            style={styles.input}
+            placeholder="Name"
+            value={name}
+            onChangeText={setName}
+            editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Phone"
+            value={phone}
+            onChangeText={setPhone}
+            keyboardType="phone-pad"
+            editable={!loading}
+          />
 
-            <Text
-              style={[
-                styles.sectionLabel,
-                {
-                  marginTop: s(12),
-                  marginBottom: s(4),
-                  fontSize: ms(14),
-                },
-              ]}
-            >
-              Security
-            </Text>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  padding: s(12),
-                  borderRadius: s(20),
-                  marginVertical: s(8),
-                  fontSize: ms(16),
-                },
-              ]}
-              placeholder="Current Password (required for email/password change)"
-              value={currentPassword}
-              onChangeText={setCurrentPassword}
-              secureTextEntry
-              editable={!loading}
-            />
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  padding: s(12),
-                  borderRadius: s(20),
-                  marginVertical: s(8),
-                  fontSize: ms(16),
-                },
-              ]}
-              placeholder="New Password (optional)"
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-              editable={!loading}
-            />
+          <Text style={styles.sectionLabel}>Security</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Current Password (required for email/password change)"
+            value={currentPassword}
+            onChangeText={setCurrentPassword}
+            secureTextEntry
+            editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="New Password (optional)"
+            value={newPassword}
+            onChangeText={setNewPassword}
+            secureTextEntry
+            editable={!loading}
+          />
 
-            {loading ? (
-              <ActivityIndicator
-                size="large"
-                color="#28a745"
-                style={{ marginTop: s(20) }}
-              />
-            ) : (
-              <TouchableOpacity
-                style={[
-                  styles.button,
-                  {
-                    padding: s(14),
-                    borderRadius: s(24),
-                    marginTop: s(20),
-                    marginBottom: s(40),
-                  },
-                ]}
-                onPress={handleSave}
-                activeOpacity={0.85}
-              >
-                <Text
-                  style={[
-                    styles.buttonText,
-                    { fontSize: ms(18) },
-                  ]}
-                >
-                  Save
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </Layout>
+          {loading ? (
+            <ActivityIndicator size="large" color="#28a745" style={{ marginTop: 20 }} />
+          ) : (
+            <TouchableOpacity style={styles.button} onPress={handleSave} activeOpacity={0.85}>
+              <Text style={styles.buttonText}>Save</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    backgroundColor: "#f5f5f5",
+  scrollContainer: {
+    flexGrow: 1,
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   centered: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
   title: {
+    fontSize: 28,
     fontWeight: "bold",
+    marginBottom: 20,
     color: "#28a745",
-    textAlign: "center",
+    alignSelf: "center",
   },
   sectionLabel: {
+    marginTop: 12,
+    marginBottom: 4,
+    fontSize: 14,
     color: "#666",
   },
   input: {
     backgroundColor: "#fff",
+    padding: 15,
+    borderRadius: 25,
+    marginVertical: 8,
     borderWidth: 1,
     borderColor: "#ddd",
+    fontSize: 16,
   },
   button: {
     backgroundColor: "#28a745",
+    padding: 15,
+    borderRadius: 25,
+    marginTop: 20,
+    marginBottom: 10,
   },
   buttonText: {
     color: "#fff",
+    fontSize: 18,
     fontWeight: "600",
     textAlign: "center",
   },

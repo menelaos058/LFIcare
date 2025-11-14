@@ -1,4 +1,4 @@
-// src/screens/ChatScreen.js
+// screens/ChatScreen.js
 import Constants from "expo-constants";
 import * as FileSystem from "expo-file-system";
 import * as ImagePicker from "expo-image-picker";
@@ -20,20 +20,16 @@ import {
   ref as storageRef,
   uploadBytes,
 } from "firebase/storage";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Linking,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -42,10 +38,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import ImageViewing from "react-native-image-viewing";
 import ParsedText from "react-native-parsed-text";
 import { auth, db, functions, storage } from "../services/firebaseConfig";
-import { useResponsive } from "../theme/responsive";
 
 /* ========================= Config ========================= */
 const EXACT_URL_REGEX = /^https?:\/\/[^\s]+$/i;
@@ -84,10 +78,7 @@ const extractYouTubeId = (url) => {
 };
 async function fetchOg(url) {
   try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "text/html" },
-    });
+    const res = await fetch(url, { method: "GET", headers: { Accept: "text/html" } });
     const html = await res.text();
     const get = (prop) => {
       const m = html.match(
@@ -105,8 +96,7 @@ async function fetchOg(url) {
       url;
 
     let image = get("og:image") || get("twitter:image") || null;
-    const desc =
-      get("og:description") || get("twitter:description") || "";
+    const desc = get("og:description") || get("twitter:description") || "";
 
     if (!image) {
       const vid = extractYouTubeId(url);
@@ -115,12 +105,7 @@ async function fetchOg(url) {
     return { title, desc, image };
   } catch {
     const vid = extractYouTubeId(url);
-    if (vid)
-      return {
-        title: "YouTube",
-        desc: "",
-        image: `https://img.youtube.com/vi/${vid}/hqdefault.jpg`,
-      };
+    if (vid) return { title: "YouTube", desc: "", image: `https://img.youtube.com/vi/${vid}/hqdefault.jpg` };
     return { title: url, desc: "", image: null };
   }
 }
@@ -129,27 +114,15 @@ const LinkPreviewCard = React.memo(({ url, onPress }) => {
   useEffect(() => {
     let alive = true;
     fetchOg(url).then((d) => alive && setData(d));
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [url]);
   return (
     <TouchableOpacity onPress={() => onPress(url)} style={styles.card}>
-      {data?.image ? (
-        <Image source={{ uri: data.image }} style={styles.cardImageLarge} />
-      ) : null}
+      {data?.image ? <Image source={{ uri: data.image }} style={styles.cardImageLarge} /> : null}
       <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8 }}>
-        <Text numberOfLines={1} style={styles.cardTitle}>
-          {data?.title || url}
-        </Text>
-        {!!data?.desc && (
-          <Text numberOfLines={2} style={styles.cardDesc}>
-            {data.desc}
-          </Text>
-        )}
-        <Text numberOfLines={1} style={styles.cardUrl}>
-          {url}
-        </Text>
+        <Text numberOfLines={1} style={styles.cardTitle}>{data?.title || url}</Text>
+        {!!data?.desc && <Text numberOfLines={2} style={styles.cardDesc}>{data.desc}</Text>}
+        <Text numberOfLines={1} style={styles.cardUrl}>{url}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -164,7 +137,7 @@ async function uploadUriToStorage({ uri, mime, storagePath }) {
   return storagePath;
 }
 
-// Signed URL (Cloud Function) ή fallback σε getDownloadURL (και τα δύο με retries)
+// Signed URL (Cloud Function) ή fallback σε getDownloadURL
 async function getSignedOrDownloadURL(storagePath, tries = 5, delayMs = 240) {
   const ref = storageRef(storage, storagePath);
 
@@ -177,11 +150,9 @@ async function getSignedOrDownloadURL(storagePath, tries = 5, delayMs = 240) {
       throw new Error("no-url");
     } catch (e) {
       const transientMsg = String(e?.message || "").toLowerCase();
-      const shouldRetryCF =
-        transientMsg.includes("not-found") ||
-        transientMsg.includes("no-url");
+      const shouldRetryCF = transientMsg.includes("not-found") || transientMsg.includes("no-url");
       if (!shouldRetryCF) {
-        // αν είναι άλλο error, προχώρα σε fallback χωρίς να σταματήσεις το loop
+        // άλλο error -> απλά συνεχίζουμε στο fallback
       }
     }
 
@@ -194,9 +165,7 @@ async function getSignedOrDownloadURL(storagePath, tries = 5, delayMs = 240) {
     }
 
     if (i < tries - 1) {
-      await new Promise((r) =>
-        setTimeout(r, delayMs * Math.pow(1.7, i))
-      );
+      await new Promise((r) => setTimeout(r, delayMs * Math.pow(1.7, i)));
     }
   }
 
@@ -298,262 +267,130 @@ const dayLabel = (key) => {
 const timeLabel = (ts) => {
   if (!ts) return "";
   const d = ts.seconds ? new Date(ts.seconds * 1000) : new Date(ts);
-  return d.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 };
 
 /* ========================= Small hooks/components ========================= */
 const useSignedUrlCache = () => {
   const [cache, setCache] = useState({});
-  const fetchAndCache = useCallback(
-    async (storagePath) => {
-      if (!storagePath) return null;
-      if (cache[storagePath]) return cache[storagePath];
-      const url = await getSignedOrDownloadURL(storagePath);
-      if (url) setCache((m) => ({ ...m, [storagePath]: url }));
-      return url || null;
-    },
-    [cache]
-  );
+  const fetchAndCache = useCallback(async (storagePath) => {
+    if (!storagePath) return null;
+    if (cache[storagePath]) return cache[storagePath];
+    const url = await getSignedOrDownloadURL(storagePath);
+    if (url) setCache((m) => ({ ...m, [storagePath]: url }));
+    return url || null;
+  }, [cache]);
   return { fetchAndCache };
 };
 
 const Avatar = React.memo(({ email }) => {
-  const { s, ms } = useResponsive();
   const letter = (email || "?").slice(0, 1).toUpperCase();
   return (
-    <View
-      style={[
-        styles.avatar,
-        {
-          width: s(32),
-          height: s(32),
-          borderRadius: s(16),
-          marginRight: s(8),
-          marginTop: s(2),
-        },
-      ]}
-    >
-      <Text
-        style={[
-          styles.avatarText,
-          {
-            fontSize: ms(14),
-          },
-        ]}
-      >
-        {letter}
-      </Text>
+    <View style={styles.avatar}>
+      <Text style={styles.avatarText}>{letter}</Text>
     </View>
   );
 });
 
-const DaySeparator = React.memo(({ label }) => {
-  const { ms, s } = useResponsive();
+const DaySeparator = React.memo(({ label }) => (
+  <View style={styles.dayWrap}>
+    <View style={styles.dayLine} />
+    <Text style={styles.dayText}>{label}</Text>
+    <View style={styles.dayLine} />
+  </View>
+));
+
+const MessageBubble = React.memo(function MessageBubble({
+  msg,
+  myEmail,
+  onPressLink,
+  openUrl,
+  fetchSigned,
+  onPressImage,
+}) {
+  const isMine =
+    myEmail && typeof msg.senderEmail === "string"
+      ? msg.senderEmail.toLowerCase() === myEmail
+      : false;
+
+  const [signed, setSigned] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!msg?.media?.storagePath) {
+        if (alive) setSigned(null);
+        return;
+      }
+      const url = await fetchSigned(msg.media.storagePath);
+      if (alive) setSigned(url);
+    })();
+    return () => { alive = false; };
+  }, [msg?.media?.storagePath, fetchSigned]);
+
+  const screenW = Dimensions.get("window").width;
+  const imgSize = Math.min(420, Math.floor(screenW * 0.80));
+
   return (
-    <View
-      style={[
-        styles.dayWrap,
-        { marginVertical: s(10), paddingHorizontal: s(8) },
-      ]}
-    >
-      <View style={styles.dayLine} />
-      <Text
-        style={[
-          styles.dayText,
-          {
-            fontSize: ms(12),
-            paddingHorizontal: s(8),
-            paddingVertical: s(2),
-          },
-        ]}
-      >
-        {label}
-      </Text>
-      <View style={styles.dayLine} />
+    <View style={[styles.row, isMine ? styles.rowMine : styles.rowOther]}>
+      {!isMine && <Avatar email={msg.senderEmail} />}
+
+      <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+        {!!msg.text && (
+          <ParsedText
+            style={[styles.messageText, isMine && { color: "#fff" }]}
+            parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
+            selectable
+          >
+            {msg.text}
+          </ParsedText>
+        )}
+
+        {!!msg.link && (
+          <View style={{ marginTop: msg.text ? 8 : 0, maxWidth: 440 }}>
+            <LinkPreviewCard url={msg.link} onPress={onPressLink} />
+          </View>
+        )}
+
+        {msg.media?.type === "image" && signed && (
+          <Pressable
+            onPress={() => onPressImage(signed)}
+            style={{ marginTop: 6, borderRadius: 14, overflow: "hidden" }}
+          >
+            <Image
+              source={{ uri: signed }}
+              style={{ width: imgSize, height: imgSize, borderRadius: 14 }}
+            />
+          </Pressable>
+        )}
+
+        {msg.media?.type === "video" && signed && (
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+            <Text style={styles.fileTitle}>🎬 Open video</Text>
+            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+          </TouchableOpacity>
+        )}
+
+        {msg.media?.type === "file" && signed && (
+          <TouchableOpacity onPress={() => openUrl(signed)} style={styles.fileCard}>
+            <Text style={styles.fileTitle}>📎 {msg.media.name || "Open file"}</Text>
+            <Text numberOfLines={1} style={styles.fileUrl}>{signed}</Text>
+          </TouchableOpacity>
+        )}
+
+        <Text style={[styles.time, isMine ? styles.timeMine : styles.timeOther]}>
+          {timeLabel(msg.timestamp)}
+        </Text>
+      </View>
     </View>
   );
-});
-
-const MessageBubble = React.memo(
-  function MessageBubble({
-    msg,
-    myEmail,
-    onPressLink,
-    openUrl,
-    fetchSigned,
-    onPressImage,
-  }) {
-    const { width, s, ms, isTablet, isLargeScreen } = useResponsive();
-
-    const isMine =
-      myEmail && typeof msg.senderEmail === "string"
-        ? msg.senderEmail.toLowerCase() === myEmail
-        : false;
-
-    const [signed, setSigned] = useState(null);
-
-    useEffect(() => {
-      let alive = true;
-      (async () => {
-        if (!msg?.media?.storagePath) {
-          if (alive) setSigned(null);
-          return;
-        }
-        const url = await fetchSigned(msg.media.storagePath);
-        if (alive) setSigned(url);
-      })();
-      return () => {
-        alive = false;
-      };
-    }, [msg?.media?.storagePath, fetchSigned]);
-
-    const imgSize = Math.min(
-      isTablet || isLargeScreen ? s(420) : s(360),
-      Math.floor(width * 0.8)
-    );
-
-    return (
-      <View
-        style={[
-          styles.row,
-          { marginVertical: s(6), paddingHorizontal: s(4) },
-          isMine ? styles.rowMine : styles.rowOther,
-        ]}
-      >
-        {!isMine && <Avatar email={msg.senderEmail} />}
-
-        <View
-          style={[
-            styles.bubble,
-            {
-              paddingHorizontal: s(12),
-              paddingVertical: s(8),
-              maxWidth: "82%",
-            },
-            isMine ? styles.bubbleMine : styles.bubbleOther,
-          ]}
-        >
-          {!!msg.text && (
-            <ParsedText
-              style={[
-                styles.messageText,
-                { fontSize: ms(16) },
-                isMine && { color: "#fff" },
-              ]}
-              parse={[{ type: "url", style: styles.linkText, onPress: onPressLink }]}
-              selectable
-            >
-              {msg.text}
-            </ParsedText>
-          )}
-
-          {!!msg.link && (
-            <View
-              style={{
-                marginTop: msg.text ? s(8) : 0,
-                maxWidth: isTablet || isLargeScreen ? s(440) : s(360),
-              }}
-            >
-              <LinkPreviewCard url={msg.link} onPress={onPressLink} />
-            </View>
-          )}
-
-          {msg.media?.type === "image" && signed && (
-            <Pressable
-              onPress={() => onPressImage(signed)}
-              style={{
-                marginTop: s(6),
-                borderRadius: s(14),
-                overflow: "hidden",
-              }}
-            >
-              <Image
-                source={{ uri: signed }}
-                style={{
-                  width: imgSize,
-                  height: imgSize,
-                  borderRadius: s(14),
-                }}
-              />
-            </Pressable>
-          )}
-
-          {msg.media?.type === "video" && signed && (
-            <TouchableOpacity
-              onPress={() => openUrl(signed)}
-              style={[
-                styles.fileCard,
-                { marginTop: s(6), padding: s(10), maxWidth: s(420) },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.fileTitle,
-                  { fontSize: ms(14), marginBottom: s(4) },
-                ]}
-              >
-                🎬 Open video
-              </Text>
-              <Text
-                numberOfLines={1}
-                style={[styles.fileUrl, { fontSize: ms(12) }]}
-              >
-                {signed}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {msg.media?.type === "file" && signed && (
-            <TouchableOpacity
-              onPress={() => openUrl(signed)}
-              style={[
-                styles.fileCard,
-                { marginTop: s(6), padding: s(10), maxWidth: s(420) },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.fileTitle,
-                  { fontSize: ms(14), marginBottom: s(4) },
-                ]}
-              >
-                📎 {msg.media.name || "Open file"}
-              </Text>
-              <Text
-                numberOfLines={1}
-                style={[styles.fileUrl, { fontSize: ms(12) }]}
-              >
-                {signed}
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          <Text
-            style={[
-              styles.time,
-              {
-                fontSize: ms(11),
-                marginTop: s(6),
-              },
-              isMine ? styles.timeMine : styles.timeOther,
-            ]}
-          >
-            {timeLabel(msg.timestamp)}
-          </Text>
-        </View>
-      </View>
-    );
-  },
-  (a, b) =>
-    a.msg?.id === b.msg?.id &&
-    a.msg?.text === b.msg?.text &&
-    a.msg?.link === b.msg?.link &&
-    a.msg?.media?.storagePath === b.msg?.media?.storagePath &&
-    a.msg?.timestamp?.seconds === b.msg?.timestamp?.seconds &&
-    a.myEmail === b.myEmail
+}, (a, b) =>
+  a.msg?.id === b.msg?.id &&
+  a.msg?.text === b.msg?.text &&
+  a.msg?.link === b.msg?.link &&
+  a.msg?.media?.storagePath === b.msg?.media?.storagePath &&
+  a.msg?.timestamp?.seconds === b.msg?.timestamp?.seconds &&
+  a.myEmail === b.myEmail
 );
 
 /* ========================= Main Screen ========================= */
@@ -566,12 +403,10 @@ export default function ChatScreen({ route }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Full-screen viewer state
+  // Full-screen viewer state (δικό μας Modal, όχι react-native-image-viewing)
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerImage, setViewerImage] = useState(null);
   const [saving, setSaving] = useState(false);
-
-  const { s, ms, isTablet, isLargeScreen } = useResponsive();
 
   const currentUser = auth.currentUser;
   const myEmail = useMemo(
@@ -603,10 +438,7 @@ export default function ChatScreen({ route }) {
         if (firstLiveBatch.current) {
           firstLiveBatch.current = false;
           setTimeout(() => {
-            listRef.current?.scrollToOffset?.({
-              offset: 0,
-              animated: false,
-            });
+            listRef.current?.scrollToOffset?.({ offset: 0, animated: false });
           }, 30);
         }
       },
@@ -631,10 +463,7 @@ export default function ChatScreen({ route }) {
     try {
       setLoadingOlder(true);
       const oldestTs = messages[0]?.timestamp;
-      if (!oldestTs) {
-        setLoadingOlder(false);
-        return;
-      }
+      if (!oldestTs) { setLoadingOlder(false); return; }
 
       const olderQ = query(
         collection(db, "chats", chatId, "messages"),
@@ -668,10 +497,11 @@ export default function ChatScreen({ route }) {
     const run = (item) => {
       if (!item || !chatId || !myEmail || !uid) return;
       setLoading(true);
-      handleIncomingShare({ chatId, myEmail, item, uid }).finally(() => {
-        setLoading(false);
-        setTimeout(() => scrollToBottom(true), 60);
-      });
+      handleIncomingShare({ chatId, myEmail, item, uid })
+        .finally(() => {
+          setLoading(false);
+          setTimeout(() => scrollToBottom(true), 60);
+        });
     };
 
     try {
@@ -679,12 +509,9 @@ export default function ChatScreen({ route }) {
         const maybe = ShareMenu.getInitialShare(run);
         if (maybe?.then) maybe.then(run).catch(() => {});
       } else if (typeof ShareMenu.getSharedText === "function") {
-        ShareMenu.getSharedText()
-          .then((text) => {
-            if (text)
-              run({ mimeType: "text/plain", data: String(text) });
-          })
-          .catch(() => {});
+        ShareMenu.getSharedText().then((text) => {
+          if (text) run({ mimeType: "text/plain", data: String(text) });
+        }).catch(() => {});
       }
     } catch {}
 
@@ -702,11 +529,7 @@ export default function ChatScreen({ route }) {
       }
     } catch {}
 
-    return () => {
-      try {
-        remove?.();
-      } catch {}
-    };
+    return () => { try { remove?.(); } catch {} };
   }, [chatId, myEmail, uid]);
 
   /* ----------------- Senders ----------------- */
@@ -731,6 +554,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
+  // Media types
   const Media = useMemo(() => {
     const M = ImagePicker.MediaType;
     if (M && typeof M.Images === "string") return M;
@@ -738,18 +562,10 @@ export default function ChatScreen({ route }) {
   }, []);
 
   const pickImage = async () => {
-    if (!chatId || !myEmail || !uid)
-      return Alert.alert(
-        "Error",
-        "Not authenticated or no chat selected."
-      );
+    if (!chatId || !myEmail || !uid) return Alert.alert("Error", "Not authenticated or no chat selected.");
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted)
-        return Alert.alert(
-          "Permission needed",
-          "Please allow photo library access."
-        );
+      if (!perm.granted) return Alert.alert("Permission needed", "Please allow photo library access.");
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: Media.Images,
@@ -782,18 +598,10 @@ export default function ChatScreen({ route }) {
   };
 
   const pickVideo = async () => {
-    if (!chatId || !myEmail || !uid)
-      return Alert.alert(
-        "Error",
-        "Not authenticated or no chat selected."
-      );
+    if (!chatId || !myEmail || !uid) return Alert.alert("Error", "Not authenticated or no chat selected.");
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted)
-        return Alert.alert(
-          "Permission needed",
-          "Please allow photo library access."
-        );
+      if (!perm.granted) return Alert.alert("Permission needed", "Please allow photo library access.");
 
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: Media.Videos,
@@ -825,7 +633,7 @@ export default function ChatScreen({ route }) {
     }
   };
 
-  /* ----------------- Full-screen viewer ----------------- */
+  /* ----------------- Full-screen viewer (δικό μας Modal) ----------------- */
   const openViewer = useCallback((url) => {
     setViewerImage(url);
     setViewerVisible(true);
@@ -837,26 +645,17 @@ export default function ChatScreen({ route }) {
       setSaving(true);
       const { status } = await MediaLibrary.requestPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert(
-          "Permission needed",
-          "Please allow media library access to save the image."
-        );
+        Alert.alert("Permission needed", "Please allow media library access to save the image.");
         setSaving(false);
         return;
       }
       const filename = `chat-${Date.now()}.jpg`;
       const dest = FileSystem.cacheDirectory + filename;
-      const { uri } = await FileSystem.downloadAsync(
-        viewerImage,
-        dest
-      );
+      const { uri } = await FileSystem.downloadAsync(viewerImage, dest);
       await MediaLibrary.saveToLibraryAsync(uri);
       Alert.alert("Saved", "Image saved to your gallery.");
     } catch (e) {
-      Alert.alert(
-        "Save failed",
-        e?.message ?? "Could not save image."
-      );
+      Alert.alert("Save failed", e?.message ?? "Could not save image.");
     } finally {
       setSaving(false);
     }
@@ -889,30 +688,15 @@ export default function ChatScreen({ route }) {
           msg={item.data}
           myEmail={myEmail}
           onPressLink={(url) => {
-            const clean = (url ?? "")
-              .toString()
-              .trim()
-              .replace(/[)\].,]+$/g, "");
+            const clean = (url ?? "").toString().trim().replace(/[)\].,]+$/g, "");
             if (!clean) return;
             /^https?:\/\//i.test(clean)
-              ? Linking.openURL(clean).catch(() =>
-                  Alert.alert("Cannot open link", clean)
-                )
+              ? Linking.openURL(clean).catch(() => Alert.alert("Cannot open link", clean))
               : Linking.canOpenURL(clean)
-                  .then((ok) =>
-                    ok
-                      ? Linking.openURL(clean)
-                      : Alert.alert("Cannot open link", clean)
-                  )
-                  .catch(() =>
-                    Alert.alert("Cannot open link", clean)
-                  );
+                  .then((ok) => (ok ? Linking.openURL(clean) : Alert.alert("Cannot open link", clean)))
+                  .catch(() => Alert.alert("Cannot open link", clean));
           }}
-          openUrl={(u) =>
-            Linking.openURL(u).catch(() =>
-              Alert.alert("Cannot open", u)
-            )
-          }
+          openUrl={(u) => Linking.openURL(u).catch(() => Alert.alert("Cannot open", u))}
           fetchSigned={fetchAndCache}
           onPressImage={openViewer}
         />
@@ -921,28 +705,9 @@ export default function ChatScreen({ route }) {
   );
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <View
-        style={[
-          styles.topBar,
-          {
-            height: s(42),
-            paddingHorizontal: isTablet || isLargeScreen ? s(16) : s(10),
-          },
-        ]}
-      >
-        <Text
-          numberOfLines={1}
-          style={[
-            styles.topTitle,
-            { fontSize: ms(15), maxWidth: "90%" },
-          ]}
-        >
-          {programTitle || "Chat"}
-        </Text>
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <View style={styles.topBar}>
+        <Text numberOfLines={1} style={styles.topTitle}>{programTitle || "Chat"}</Text>
       </View>
 
       <FlatList
@@ -951,21 +716,12 @@ export default function ChatScreen({ route }) {
         inverted
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        contentContainerStyle={{
-          padding: s(12),
-          paddingTop: s(6),
-        }}
+        contentContainerStyle={{ padding: 12, paddingTop: 6 }}
         keyboardShouldPersistTaps="handled"
         maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
         onEndReachedThreshold={0.12}
         onEndReached={loadOlder}
-        ListFooterComponent={
-          loadingOlder ? (
-            <View style={{ paddingVertical: s(8) }}>
-              <ActivityIndicator />
-            </View>
-          ) : null
-        }
+        ListFooterComponent={loadingOlder ? <View style={{ paddingVertical: 8 }}><ActivityIndicator /></View> : null}
         initialNumToRender={18}
         maxToRenderPerBatch={12}
         windowSize={7}
@@ -973,150 +729,73 @@ export default function ChatScreen({ route }) {
       />
 
       {loading && (
-        <View style={{ padding: s(6), alignItems: "center" }}>
+        <View style={{ padding: 6, alignItems: "center" }}>
           <ActivityIndicator size="large" color="#22c55e" />
         </View>
       )}
 
-      <View
-        style={[
-          styles.inputBar,
-          {
-            paddingHorizontal: s(10),
-            paddingVertical: s(8),
-            gap: s(8),
-          },
-        ]}
-      >
-        <Pressable
-          onPress={pickImage}
-          style={({ pressed }) => [
-            styles.circleBtn,
-            {
-              width: s(38),
-              height: s(38),
-              borderRadius: s(19),
-            },
-            pressed && { opacity: 0.7 },
-          ]}
-        >
-          <Text style={[styles.circleBtnText, { fontSize: ms(18) }]}>
-            📷
-          </Text>
+      <View style={styles.inputBar}>
+        <Pressable onPress={pickImage} style={({ pressed }) => [styles.circleBtn, pressed && { opacity: 0.7 }]}>
+          <Text style={styles.circleBtnText}>📷</Text>
         </Pressable>
 
-        <Pressable
-          onPress={pickVideo}
-          style={({ pressed }) => [
-            styles.circleBtn,
-            {
-              width: s(38),
-              height: s(38),
-              borderRadius: s(19),
-            },
-            pressed && { opacity: 0.7 },
-          ]}
-        >
-          <Text style={[styles.circleBtnText, { fontSize: ms(18) }]}>
-            🎥
-          </Text>
+        <Pressable onPress={pickVideo} style={({ pressed }) => [styles.circleBtn, pressed && { opacity: 0.7 }]}>
+          <Text style={styles.circleBtnText}>🎥</Text>
         </Pressable>
 
-        <View
-          style={[
-            styles.inputWrap,
-            {
-              borderRadius: s(18),
-              maxHeight: s(120),
-            },
-          ]}
-        >
+        <View style={styles.inputWrap}>
           <TextInput
-            style={[
-              styles.input,
-              {
-                paddingHorizontal: s(12),
-                paddingVertical: s(8),
-                fontSize: ms(16),
-              },
-            ]}
+            style={styles.input}
             placeholder="Message…"
             value={input}
             onChangeText={setInput}
             autoCapitalize="none"
             autoCorrect={false}
             multiline
-            onFocus={() =>
-              setTimeout(
-                () =>
-                  listRef.current?.scrollToOffset?.({
-                    offset: 0,
-                    animated: true,
-                  }),
-                40
-              )
-            }
+            onFocus={() => setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 40)}
           />
         </View>
 
-        <Pressable
-          onPress={sendMessage}
-          style={({ pressed }) => [
-            styles.sendBtn,
-            {
-              width: s(44),
-              height: s(44),
-              borderRadius: s(22),
-            },
-            pressed && { opacity: 0.85 },
-          ]}
-        >
-          <Text
-            style={[
-              styles.sendBtnText,
-              { fontSize: ms(18), marginLeft: s(2) },
-            ]}
-          >
-            ➤
-          </Text>
+        <Pressable onPress={sendMessage} style={({ pressed }) => [styles.sendBtn, pressed && { opacity: 0.85 }]}>
+          <Text style={styles.sendBtnText}>➤</Text>
         </Pressable>
       </View>
 
-      <ImageViewing
-        images={viewerImage ? [{ uri: viewerImage }] : []}
-        imageIndex={0}
+      {/* Δικό μας full-screen viewer, cross-platform */}
+      <Modal
         visible={viewerVisible}
+        transparent
+        animationType="fade"
         onRequestClose={() => setViewerVisible(false)}
-        FooterComponent={() => (
-          <View
-            style={[
-              styles.viewerFooter,
-              { paddingBottom: s(24), paddingTop: s(8) },
-            ]}
-          >
-            <Pressable
-              onPress={saveCurrentImage}
-              style={[
-                styles.saveBtn,
-                { paddingHorizontal: s(18), paddingVertical: s(10) },
-              ]}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text
-                  style={[
-                    styles.saveBtnText,
-                    { fontSize: ms(14) },
-                  ]}
-                >
-                  Save
-                </Text>
-              )}
-            </Pressable>
+      >
+        <View style={styles.viewerOverlay}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setViewerVisible(false)} />
+          <View style={styles.viewerInner}>
+            {viewerImage && (
+              <Image
+                source={{ uri: viewerImage }}
+                style={styles.viewerImage}
+                resizeMode="contain"
+              />
+            )}
+            <View style={styles.viewerButtonsRow}>
+              <Pressable style={styles.viewerButton} onPress={saveCurrentImage}>
+                {saving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.viewerButtonText}>Save</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={[styles.viewerButton, { backgroundColor: "#6b7280" }]}
+                onPress={() => setViewerVisible(false)}
+              >
+                <Text style={styles.viewerButtonText}>Close</Text>
+              </Pressable>
+            </View>
           </View>
-        )}
-      />
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1126,52 +805,43 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F6F7FB" },
 
   topBar: {
+    height: 42,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#fff",
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: "#E5E7EB",
   },
-  topTitle: { fontWeight: "700", color: "#111827" },
+  topTitle: { fontSize: 15, fontWeight: "700", color: "#111827" },
 
-  row: { flexDirection: "row" },
+  row: { flexDirection: "row", marginVertical: 6, paddingHorizontal: 4 },
   rowMine: { justifyContent: "flex-end" },
   rowOther: { justifyContent: "flex-start" },
 
   avatar: {
-    backgroundColor: "#CBD5E1",
-    alignItems: "center",
-    justifyContent: "center",
+    width: 32, height: 32, borderRadius: 16, backgroundColor: "#CBD5E1",
+    alignItems: "center", justifyContent: "center", marginRight: 8, marginTop: 2,
   },
   avatarText: { color: "#1F2937", fontWeight: "700" },
 
   bubble: {
+    maxWidth: "82%",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 16,
     ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-      },
+      ios: { shadowColor: "#000", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
       android: { elevation: 1 },
+      default: {},
     }),
   },
-  bubbleMine: {
-    backgroundColor: "#3B82F6",
-    borderTopRightRadius: 6,
-    alignSelf: "flex-end",
-  },
-  bubbleOther: {
-    backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 6,
-    alignSelf: "flex-start",
-  },
+  bubbleMine: { backgroundColor: "#3B82F6", borderTopRightRadius: 6, alignSelf: "flex-end" },
+  bubbleOther: { backgroundColor: "#FFFFFF", borderTopLeftRadius: 6, alignSelf: "flex-start" },
 
-  messageText: { color: "#111827" },
+  messageText: { fontSize: 16, color: "#111827" },
   linkText: { textDecorationLine: "underline" },
 
-  time: { alignSelf: "flex-end", opacity: 0.75 },
+  time: { fontSize: 11, marginTop: 6, alignSelf: "flex-end", opacity: 0.75 },
   timeMine: { color: "rgba(255,255,255,0.9)" },
   timeOther: { color: "#6B7280" },
 
@@ -1182,6 +852,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#eee",
     overflow: "hidden",
+    maxWidth: 440,
     marginTop: 6,
   },
   cardImageLarge: { width: "100%", height: 220 },
@@ -1192,63 +863,81 @@ const styles = StyleSheet.create({
   // file/video card
   fileCard: {
     backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#eee",
+    borderRadius: 10, borderWidth: 1, borderColor: "#eee",
+    padding: 10, marginTop: 6, maxWidth: 420,
   },
-  fileTitle: { fontWeight: "600", color: "#111827" },
+  fileTitle: { fontWeight: "600", marginBottom: 4, color: "#111827" },
   fileUrl: { fontSize: 12, color: "#6B7280" },
 
   // day separator
   dayWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    flexDirection: "row", alignItems: "center", gap: 12, marginVertical: 10, paddingHorizontal: 8,
   },
   dayLine: { flex: 1, height: 1, backgroundColor: "#E5E7EB" },
   dayText: {
-    color: "#6B7280",
-    backgroundColor: "#E5E7EB",
-    borderRadius: 999,
+    fontSize: 12, color: "#6B7280", backgroundColor: "#E5E7EB",
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999,
   },
 
   // input
   inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    backgroundColor: "#fff",
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
+    flexDirection: "row", alignItems: "flex-end",
+    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#fff",
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", gap: 8,
   },
   circleBtn: {
-    backgroundColor: "#F3F4F6",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
-    alignItems: "center",
-    justifyContent: "center",
+    width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center",
+    backgroundColor: "#F3F4F6", borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB",
   },
-  circleBtnText: {},
+  circleBtnText: { fontSize: 18 },
+
   inputWrap: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: "#E5E7EB",
+    flex: 1, backgroundColor: "#F3F4F6", borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: "#E5E7EB", maxHeight: 120,
   },
-  input: {},
+  input: { paddingHorizontal: 12, paddingVertical: 8, fontSize: 16 },
+
   sendBtn: {
-    alignItems: "center",
-    justifyContent: "center",
+    width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center",
     backgroundColor: "#22C55E",
   },
-  sendBtnText: { color: "#fff", fontWeight: "800" },
+  sendBtnText: { color: "#fff", fontSize: 18, fontWeight: "800", marginLeft: 2 },
 
-  // viewer footer
-  viewerFooter: {
+  // viewer overlay (δικό μας full-screen image viewer)
+  viewerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 12,
+  },
+  viewerInner: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
     alignItems: "center",
   },
-  saveBtn: {
-    backgroundColor: "#111827",
-    borderRadius: 999,
+  viewerImage: {
+    width: "100%",
+    height: "80%",
   },
-  saveBtnText: { color: "#fff", fontWeight: "700" },
+  viewerButtonsRow: {
+    position: "absolute",
+    bottom: 40,
+    alignSelf: "center",
+    flexDirection: "row",
+    gap: 12,
+  },
+  viewerButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "#111827",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  viewerButtonText: {
+    color: "#fff",
+    fontWeight: "700",
+  },
 });

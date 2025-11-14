@@ -1,57 +1,41 @@
-// src/screens/HomeScreen.js
-import { ScrollView, StyleSheet, Text, View } from "react-native";
-import Layout from "../components/Layout";
-import { useResponsive } from "../theme/responsive";
+// screens/HomeScreen.js
+import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 export default function HomeScreen({ user }) {
-  const { s, ms, isLargeScreen } = useResponsive();
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768;
+  const isWide = width >= 1024;
+
+  const cardMaxWidth = isWide ? 900 : 720;
 
   return (
-    <Layout>
-      <ScrollView
-        contentContainerStyle={[
-          styles.container,
-          {
-            padding: s(24),
-          },
-        ]}
-      >
-        <View
+    <ScrollView
+      contentContainerStyle={[
+        styles.container,
+        { paddingHorizontal: isTablet ? 32 : 24 },
+      ]}
+    >
+      <View style={[styles.card, { maxWidth: cardMaxWidth }]}>
+        <Text
           style={[
-            styles.card,
-            {
-              padding: s(24),
-              borderRadius: s(16),
-              maxWidth: isLargeScreen ? 720 : 600,
-            },
+            styles.title,
+            { fontSize: isTablet ? 30 : 26 },
           ]}
         >
-          <Text
-            style={[
-              styles.title,
-              {
-                fontSize: ms(28),
-                marginBottom: s(8),
-              },
-            ]}
-          >
-            Welcome to LFIcare
-          </Text>
-          <Text
-            style={[
-              styles.subtitle,
-              {
-                fontSize: ms(14),
-              },
-            ]}
-          >
-            {user
-              ? `Hello ${user.email || "there"} — explore your programs and chat with your teachers from the header.`
-              : "Browse programs and teachers from the header. Log in to access your profile and purchases."}
-          </Text>
-        </View>
-      </ScrollView>
-    </Layout>
+          Welcome to LFIcare
+        </Text>
+        <Text
+          style={[
+            styles.subtitle,
+            { fontSize: isTablet ? 16 : 14 },
+          ]}
+        >
+          {user
+            ? `Hello ${user.email || "there"} — explore your programs and chat with your teachers from the header.`
+            : "Browse programs and teachers from the header. Log in to access your profile and purchases."}
+        </Text>
+      </View>
+    </ScrollView>
   );
 }
 
@@ -60,16 +44,20 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingVertical: 24,
     backgroundColor: "#f5f5f5",
   },
   card: {
     backgroundColor: "#fff",
     borderRadius: 16,
+    padding: 24,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    width: "100%",
   },
   title: {
     fontWeight: "800",
+    marginBottom: 8,
     color: "#111827",
     textAlign: "center",
   },

@@ -1,3 +1,4 @@
+// App.js
 import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { onAuthStateChanged } from "firebase/auth";
@@ -7,9 +8,11 @@ import {
   ActivityIndicator,
   NativeModules,
   Platform,
-  View
+  View,
 } from "react-native";
-import 'react-native-gesture-handler';
+import "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context"; // 👈 ΠΡΟΣΘΗΚΗ
+
 import { auth, db } from "./src/services/firebaseConfig";
 
 // Screens
@@ -87,7 +90,7 @@ export default function App() {
           setCurrentUser({
             uid: user.uid,
             email: user.email ?? null,
-            role
+            role,
           });
           setLoading(false);
         },
@@ -96,7 +99,7 @@ export default function App() {
           setCurrentUser({
             uid: user.uid,
             email: user.email ?? null,
-            role: "user"
+            role: "user",
           });
           setLoading(false);
         }
@@ -157,7 +160,7 @@ export default function App() {
 
     if (!currentUser) {
       navRef.navigate("Login", {
-        redirect: { name: "ShareSheet", params: { shared: pendingShare } }
+        redirect: { name: "ShareSheet", params: { shared: pendingShare } },
       });
       setPendingShare(null);
       return;
@@ -173,7 +176,7 @@ export default function App() {
         style={{
           flex: 1,
           justifyContent: "center",
-          alignItems: "center"
+          alignItems: "center",
         }}
       >
         <ActivityIndicator size="large" />
@@ -182,52 +185,56 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer ref={navRef} onReady={() => setNavReady(true)}>
-      <Header user={currentUser} setUser={setCurrentUser} />
+    <SafeAreaProvider> {/* 👈 ΤΥΛΙΓΟΥΜΕ ΟΛΗ ΤΗΝ APP */}
+      <NavigationContainer ref={navRef} onReady={() => setNavReady(true)}>
+        <Header user={currentUser} setUser={setCurrentUser} />
 
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Home">
+            {(props) => <HomeScreen {...props} user={currentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="Programs">
-          {(props) => <ProgramsScreen {...props} user={currentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="Programs">
+            {(props) => <ProgramsScreen {...props} user={currentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="Teachers">
-          {(props) => <TeachersScreen {...props} user={currentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="Teachers">
+            {(props) => <TeachersScreen {...props} user={currentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="Contact" component={ContactScreen} />
+          <Stack.Screen name="Contact" component={ContactScreen} />
 
-        <Stack.Screen name="Login">
-          {(props) => <LoginScreen {...props} setUser={setCurrentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="Login">
+            {(props) => <LoginScreen {...props} setUser={setCurrentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="Register">
-          {(props) => <RegisterScreen {...props} setUser={setCurrentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="Register">
+            {(props) => <RegisterScreen {...props} setUser={setCurrentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="MyPrograms">
-          {(props) => <MyProgramsScreen {...props} user={currentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="MyPrograms">
+            {(props) => <MyProgramsScreen {...props} user={currentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="Profile">
-          {(props) => <ProfileScreen {...props} user={currentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="Profile">
+            {(props) => <ProfileScreen {...props} user={currentUser} />}
+          </Stack.Screen>
 
-        <Stack.Screen name="Chat">
-          {(props) => <ChatScreen {...props} user={currentUser} />}
-        </Stack.Screen>
+          <Stack.Screen name="Chat">
+            {(props) => <ChatScreen {...props} user={currentUser} />}
+          </Stack.Screen>
 
-        {currentUser?.role === "admin" && (
-          <Stack.Screen name="Admin" component={AdminScreen} />
-        )}
+          {currentUser?.role === "admin" && (
+            <Stack.Screen name="Admin" component={AdminScreen} />
+          )}
 
-        <Stack.Screen
-          name="ShareSheet"
-          component={ShareSheetScreen}
-          options={{ headerShown: true, title: "Κοινοποίηση" }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+          <Stack.Screen
+            name="ShareSheet"
+            component={ShareSheetScreen}
+            options={{ headerShown: true, title: "Κοινοποίηση" }}
+          />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
