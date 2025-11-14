@@ -1,4 +1,4 @@
-// screens/ProfileScreen.js
+// src/screens/ProfileScreen.js
 import {
   EmailAuthProvider,
   reauthenticateWithCredential,
@@ -19,7 +19,9 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Layout from "../components/Layout";
 import { auth, db } from "../services/firebaseConfig";
+import { useResponsive } from "../theme/responsive";
 
 export default function ProfileScreen({ user }) {
   const [loading, setLoading] = useState(false);
@@ -27,8 +29,10 @@ export default function ProfileScreen({ user }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState("");
-  const [currentPassword, setCurrentPassword] = useState(""); // για reauth
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+
+  const { s, ms, isLargeScreen } = useResponsive();
 
   useEffect(() => {
     if (!user) return;
@@ -44,7 +48,6 @@ export default function ProfileScreen({ user }) {
           setInitialEmail(data.email || user.email || "");
           setPhone(data.phone || "");
         } else {
-          // Αν δεν υπάρχει user doc, κράτα τα του auth
           setName("");
           setEmail(user.email || "");
           setInitialEmail(user.email || "");
@@ -68,7 +71,6 @@ export default function ProfileScreen({ user }) {
       Alert.alert("Error", "Email cannot be empty.");
       return false;
     }
-    // Απλός έλεγχος email
     if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
       Alert.alert("Error", "Please enter a valid email.");
       return false;
@@ -77,7 +79,6 @@ export default function ProfileScreen({ user }) {
       Alert.alert("Error", "New password must be at least 6 characters.");
       return false;
     }
-    // Αν αλλάζει email ή password, απαιτούμε current password για reauth
     const sensitiveChange = email.trim() !== initialEmail || !!newPassword;
     if (sensitiveChange && !currentPassword) {
       Alert.alert(
@@ -97,7 +98,6 @@ export default function ProfileScreen({ user }) {
     try {
       const userRef = doc(db, "users", user.uid);
 
-      // 1) Αν αλλάζει email ή password -> reauth
       const emailChanged = email.trim() !== initialEmail;
       const passwordChanged = !!newPassword;
       if (emailChanged || passwordChanged) {
@@ -108,7 +108,6 @@ export default function ProfileScreen({ user }) {
         await reauthenticateWithCredential(auth.currentUser, cred);
       }
 
-      // 2) Ενημέρωση στο Auth (ευαίσθητες αλλαγές)
       if (emailChanged) {
         await updateEmail(auth.currentUser, email.trim());
       }
@@ -116,7 +115,6 @@ export default function ProfileScreen({ user }) {
         await updatePassword(auth.currentUser, newPassword);
       }
 
-      // 3) Ενημέρωση Firestore mirror (μην αλλάζεις role κ.λπ.)
       await updateDoc(userRef, {
         name: name.trim(),
         email: email.trim(),
@@ -124,8 +122,6 @@ export default function ProfileScreen({ user }) {
         updatedAt: serverTimestamp(),
       });
 
-      // 4) Το App.js ακούει live το /users/{uid} για role, ενώ το email από Auth
-      //    θα συγχρονιστεί με την επόμενη auth state αλλαγή.
       setInitialEmail(email.trim());
       setNewPassword("");
       setCurrentPassword("");
@@ -146,80 +142,181 @@ export default function ProfileScreen({ user }) {
 
   if (!user) {
     return (
-      <View style={styles.centered}>
-        <Text>Please log in to see your profile.</Text>
-      </View>
+      <Layout>
+        <View style={styles.centered}>
+          <Text>Please log in to see your profile.</Text>
+        </View>
+      </Layout>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Profile</Text>
+    <Layout>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={[
+            styles.container,
+            {
+              padding: s(20),
+              paddingBottom: s(40),
+            },
+          ]}
+        >
+          <View
+            style={{
+              alignSelf: "center",
+              width: "100%",
+              maxWidth: isLargeScreen ? 520 : 440,
+            }}
+          >
+            <Text
+              style={[
+                styles.title,
+                {
+                  fontSize: ms(28),
+                  marginBottom: s(20),
+                },
+              ]}
+            >
+              Profile
+            </Text>
 
-        <TextInput
-          style={styles.input}
-          placeholder="Name"
-          value={name}
-          onChangeText={setName}
-          editable={!loading}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          editable={!loading}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Phone"
-          value={phone}
-          onChangeText={setPhone}
-          keyboardType="phone-pad"
-          editable={!loading}
-        />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(12),
+                  borderRadius: s(20),
+                  marginVertical: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Name"
+              value={name}
+              onChangeText={setName}
+              editable={!loading}
+            />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(12),
+                  borderRadius: s(20),
+                  marginVertical: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              editable={!loading}
+            />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(12),
+                  borderRadius: s(20),
+                  marginVertical: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Phone"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              editable={!loading}
+            />
 
-        {/* Τα παρακάτω χρειάζονται μόνο για ευαίσθητες αλλαγές */}
-        <Text style={styles.sectionLabel}>Security</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Current Password (required for email/password change)"
-          value={currentPassword}
-          onChangeText={setCurrentPassword}
-          secureTextEntry
-          editable={!loading}
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="New Password (optional)"
-          value={newPassword}
-          onChangeText={setNewPassword}
-          secureTextEntry
-          editable={!loading}
-        />
+            <Text
+              style={[
+                styles.sectionLabel,
+                {
+                  marginTop: s(12),
+                  marginBottom: s(4),
+                  fontSize: ms(14),
+                },
+              ]}
+            >
+              Security
+            </Text>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(12),
+                  borderRadius: s(20),
+                  marginVertical: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Current Password (required for email/password change)"
+              value={currentPassword}
+              onChangeText={setCurrentPassword}
+              secureTextEntry
+              editable={!loading}
+            />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(12),
+                  borderRadius: s(20),
+                  marginVertical: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="New Password (optional)"
+              value={newPassword}
+              onChangeText={setNewPassword}
+              secureTextEntry
+              editable={!loading}
+            />
 
-        {loading ? (
-          <ActivityIndicator size="large" color="#28a745" style={{ marginTop: 20 }} />
-        ) : (
-          <TouchableOpacity style={styles.button} onPress={handleSave} activeOpacity={0.85}>
-            <Text style={styles.buttonText}>Save</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
-    </KeyboardAvoidingView>
+            {loading ? (
+              <ActivityIndicator
+                size="large"
+                color="#28a745"
+                style={{ marginTop: s(20) }}
+              />
+            ) : (
+              <TouchableOpacity
+                style={[
+                  styles.button,
+                  {
+                    padding: s(14),
+                    borderRadius: s(24),
+                    marginTop: s(20),
+                    marginBottom: s(40),
+                  },
+                ]}
+                onPress={handleSave}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.buttonText,
+                    { fontSize: ms(18) },
+                  ]}
+                >
+                  Save
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Layout>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    paddingBottom: 40,
     backgroundColor: "#f5f5f5",
   },
   centered: {
@@ -228,37 +325,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   title: {
-    fontSize: 28,
     fontWeight: "bold",
-    marginBottom: 20,
     color: "#28a745",
-    alignSelf: "center",
+    textAlign: "center",
   },
   sectionLabel: {
-    marginTop: 12,
-    marginBottom: 4,
-    fontSize: 14,
     color: "#666",
   },
   input: {
     backgroundColor: "#fff",
-    padding: 15,
-    borderRadius: 25,
-    marginVertical: 8,
     borderWidth: 1,
     borderColor: "#ddd",
-    fontSize: 16,
   },
   button: {
     backgroundColor: "#28a745",
-    padding: 15,
-    borderRadius: 25,
-    marginTop: 20,
-    marginBottom: 40,
   },
   buttonText: {
     color: "#fff",
-    fontSize: 18,
     fontWeight: "600",
     textAlign: "center",
   },

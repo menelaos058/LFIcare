@@ -1,18 +1,57 @@
-// screens/HomeScreen.js
+// src/screens/HomeScreen.js
 import { ScrollView, StyleSheet, Text, View } from "react-native";
+import Layout from "../components/Layout";
+import { useResponsive } from "../theme/responsive";
 
 export default function HomeScreen({ user }) {
+  const { s, ms, isLargeScreen } = useResponsive();
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Welcome to LFIcare</Text>
-        <Text style={styles.subtitle}>
-          {user
-            ? `Hello ${user.email || "there"} — explore your programs and chat with your teachers from the header.`
-            : "Browse programs and teachers from the header. Log in to access your profile and purchases."}
-        </Text>
-      </View>
-    </ScrollView>
+    <Layout>
+      <ScrollView
+        contentContainerStyle={[
+          styles.container,
+          {
+            padding: s(24),
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.card,
+            {
+              padding: s(24),
+              borderRadius: s(16),
+              maxWidth: isLargeScreen ? 720 : 600,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.title,
+              {
+                fontSize: ms(28),
+                marginBottom: s(8),
+              },
+            ]}
+          >
+            Welcome to LFIcare
+          </Text>
+          <Text
+            style={[
+              styles.subtitle,
+              {
+                fontSize: ms(14),
+              },
+            ]}
+          >
+            {user
+              ? `Hello ${user.email || "there"} — explore your programs and chat with your teachers from the header.`
+              : "Browse programs and teachers from the header. Log in to access your profile and purchases."}
+          </Text>
+        </View>
+      </ScrollView>
+    </Layout>
   );
 }
 
@@ -21,26 +60,20 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
     backgroundColor: "#f5f5f5",
   },
   card: {
     backgroundColor: "#fff",
     borderRadius: 16,
-    padding: 24,
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    maxWidth: 720,
   },
   title: {
-    fontSize: 28,
     fontWeight: "800",
-    marginBottom: 8,
     color: "#111827",
     textAlign: "center",
   },
   subtitle: {
-    fontSize: 14,
     color: "#4b5563",
     textAlign: "center",
   },

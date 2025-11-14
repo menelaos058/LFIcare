@@ -1,4 +1,4 @@
-// screens/TeachersScreen.js
+// src/screens/TeachersScreen.js
 import {
   addDoc,
   collection,
@@ -18,32 +18,31 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Layout from "../components/Layout";
 import { db } from "../services/firebaseConfig";
+import { useResponsive } from "../theme/responsive";
 
 export default function TeachersScreen({ user: initialUser }) {
   const [teachers, setTeachers] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // add form state
   const [newTeacherName, setNewTeacherName] = useState("");
   const [newTeacherEmail, setNewTeacherEmail] = useState("");
   const [newTeacherPhone, setNewTeacherPhone] = useState("");
   const [newTeacherDescription, setNewTeacherDescription] = useState("");
 
-  // edit state
   const [editingId, setEditingId] = useState(null);
   const [editingName, setEditingName] = useState("");
   const [editingEmail, setEditingEmail] = useState("");
   const [editingPhone, setEditingPhone] = useState("");
   const [editingDescription, setEditingDescription] = useState("");
 
-  // UI state
   const [expandedId, setExpandedId] = useState(null);
 
-  // Ποντάρουμε στον ρόλο που ήδη μας δίνει το App.js (live onSnapshot)
+  const { s, ms, isLargeScreen } = useResponsive();
+
   const isAdmin = initialUser?.role === "admin";
 
-  // Real-time teachers
   useEffect(() => {
     const unsub = onSnapshot(
       collection(db, "teachers"),
@@ -61,7 +60,8 @@ export default function TeachersScreen({ user: initialUser }) {
     return () => unsub();
   }, []);
 
-  const toggleExpand = (id) => setExpandedId(expandedId === id ? null : id);
+  const toggleExpand = (id) =>
+    setExpandedId(expandedId === id ? null : id);
 
   const validateTeacher = useCallback((t) => {
     if (!t.name.trim()) {
@@ -74,13 +74,15 @@ export default function TeachersScreen({ user: initialUser }) {
       return false;
     }
     if (t.phone && !/^\+?\d{7,15}$/.test(t.phone.trim())) {
-      Alert.alert("Validation Error", "Please enter a valid phone number (7–15 digits).");
+      Alert.alert(
+        "Validation Error",
+        "Please enter a valid phone number (7–15 digits)."
+      );
       return false;
     }
     return true;
   }, []);
 
-  // Create
   const addTeacher = useCallback(async () => {
     if (!isAdmin) {
       Alert.alert("Access Denied", "Only admins can add teachers.");
@@ -95,7 +97,6 @@ export default function TeachersScreen({ user: initialUser }) {
     if (!validateTeacher(payload)) return;
 
     try {
-      // ΣΗΜΑΝΤΙΚΟ: μόνο τα whitelisted πεδία που επιτρέπουν οι rules
       await addDoc(collection(db, "teachers"), {
         name: payload.name.trim(),
         email: payload.email,
@@ -108,27 +109,47 @@ export default function TeachersScreen({ user: initialUser }) {
       setNewTeacherDescription("");
       setExpandedId(null);
     } catch (error) {
-      Alert.alert("Error", "Failed to add teacher: " + error.message);
+      Alert.alert(
+        "Error",
+        "Failed to add teacher: " + error.message
+      );
     }
-  }, [isAdmin, newTeacherName, newTeacherEmail, newTeacherPhone, newTeacherDescription, validateTeacher]);
+  }, [
+    isAdmin,
+    newTeacherName,
+    newTeacherEmail,
+    newTeacherPhone,
+    newTeacherDescription,
+    validateTeacher,
+  ]);
 
-  // Delete
-  const deleteTeacher = useCallback(async (id) => {
-    if (!isAdmin) {
-      Alert.alert("Access Denied", "Only admins can delete teachers.");
-      return;
-    }
-    try {
-      await deleteDoc(doc(db, "teachers", id));
-    } catch (error) {
-      Alert.alert("Error", "Failed to delete teacher: " + error.message);
-    }
-  }, [isAdmin]);
+  const deleteTeacher = useCallback(
+    async (id) => {
+      if (!isAdmin) {
+        Alert.alert(
+          "Access Denied",
+          "Only admins can delete teachers."
+        );
+        return;
+      }
+      try {
+        await deleteDoc(doc(db, "teachers", id));
+      } catch (error) {
+        Alert.alert(
+          "Error",
+          "Failed to delete teacher: " + error.message
+        );
+      }
+    },
+    [isAdmin]
+  );
 
-  // Start Edit
   const startEditTeacher = (teacher) => {
     if (!isAdmin) {
-      Alert.alert("Access Denied", "Only admins can edit teachers.");
+      Alert.alert(
+        "Access Denied",
+        "Only admins can edit teachers."
+      );
       return;
     }
     setEditingId(teacher.id);
@@ -138,10 +159,12 @@ export default function TeachersScreen({ user: initialUser }) {
     setEditingDescription(teacher.description ?? "");
   };
 
-  // Save Edit
   const saveEditTeacher = useCallback(async () => {
     if (!isAdmin) {
-      Alert.alert("Access Denied", "Only admins can edit teachers.");
+      Alert.alert(
+        "Access Denied",
+        "Only admins can edit teachers."
+      );
       return;
     }
     const payload = {
@@ -153,7 +176,6 @@ export default function TeachersScreen({ user: initialUser }) {
     if (!validateTeacher(payload)) return;
 
     try {
-      // ΣΗΜΑΝΤΙΚΟ: μόνο τα πεδία που προβλέπουν οι rules
       await updateDoc(doc(db, "teachers", editingId), {
         name: payload.name.trim(),
         email: payload.email,
@@ -166,9 +188,20 @@ export default function TeachersScreen({ user: initialUser }) {
       setEditingPhone("");
       setEditingDescription("");
     } catch (error) {
-      Alert.alert("Error", "Failed to update teacher: " + error.message);
+      Alert.alert(
+        "Error",
+        "Failed to update teacher: " + error.message
+      );
     }
-  }, [isAdmin, editingId, editingName, editingEmail, editingPhone, editingDescription, validateTeacher]);
+  }, [
+    isAdmin,
+    editingId,
+    editingName,
+    editingEmail,
+    editingPhone,
+    editingDescription,
+    validateTeacher,
+  ]);
 
   const cancelEdit = () => {
     setEditingId(null);
@@ -183,18 +216,41 @@ export default function TeachersScreen({ user: initialUser }) {
     const isExpanded = expandedId === item.id;
 
     return (
-      <View style={styles.item}>
-        {/* Header */}
+      <View
+        style={[
+          styles.item,
+          {
+            padding: s(15),
+            borderRadius: s(12),
+          },
+        ]}
+      >
         {isEditing ? (
           <>
             <TextInput
-              style={styles.inputInline}
+              style={[
+                styles.inputInline,
+                {
+                  padding: s(6),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                  marginTop: s(8),
+                },
+              ]}
               value={editingName}
               placeholder="Name"
               onChangeText={setEditingName}
             />
             <TextInput
-              style={styles.inputInline}
+              style={[
+                styles.inputInline,
+                {
+                  padding: s(6),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                  marginTop: s(8),
+                },
+              ]}
               value={editingEmail}
               placeholder="Email"
               onChangeText={setEditingEmail}
@@ -202,7 +258,15 @@ export default function TeachersScreen({ user: initialUser }) {
               keyboardType="email-address"
             />
             <TextInput
-              style={styles.inputInline}
+              style={[
+                styles.inputInline,
+                {
+                  padding: s(6),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                  marginTop: s(8),
+                },
+              ]}
               value={editingPhone}
               placeholder="Phone"
               onChangeText={setEditingPhone}
@@ -211,41 +275,133 @@ export default function TeachersScreen({ user: initialUser }) {
           </>
         ) : (
           <View style={styles.headerRow}>
-            <Text style={styles.itemText}>{item.name}</Text>
+            <Text
+              style={[
+                styles.itemText,
+                { fontSize: ms(16) },
+              ]}
+            >
+              {item.name}
+            </Text>
             <TouchableOpacity onPress={() => toggleExpand(item.id)}>
-              <Text style={styles.expandIcon}>{isExpanded ? "−" : "+"}</Text>
+              <Text
+                style={[
+                  styles.expandIcon,
+                  { fontSize: ms(20) },
+                ]}
+              >
+                {isExpanded ? "−" : "+"}
+              </Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Λεπτομέρειες */}
         {isExpanded && (
-          <View style={styles.details}>
-            <Text>Email: {item.email || "N/A"}</Text>
-            <Text>Phone: {item.phone || "N/A"}</Text>
-            <Text>Description: {item.description || "No description"}</Text>
+          <View
+            style={[
+              styles.details,
+              { marginTop: s(10) },
+            ]}
+          >
+            <Text style={{ fontSize: ms(14) }}>
+              Email: {item.email || "N/A"}
+            </Text>
+            <Text style={{ fontSize: ms(14), marginTop: s(4) }}>
+              Phone: {item.phone || "N/A"}
+            </Text>
+            <Text style={{ fontSize: ms(14), marginTop: s(4) }}>
+              Description: {item.description || "No description"}
+            </Text>
           </View>
         )}
 
-        {/* Admin κουμπιά */}
         {isAdmin && (
-          <View style={styles.adminButtons}>
+          <View
+            style={[
+              styles.adminButtons,
+              { marginTop: s(10) },
+            ]}
+          >
             {isEditing ? (
               <>
-                <TouchableOpacity style={styles.saveButton} onPress={saveEditTeacher}>
-                  <Text style={styles.buttonText}>Save</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.saveButton,
+                    {
+                      padding: s(6),
+                      borderRadius: s(6),
+                    },
+                  ]}
+                  onPress={saveEditTeacher}
+                >
+                  <Text
+                    style={[
+                      styles.buttonText,
+                      { fontSize: ms(13) },
+                    ]}
+                  >
+                    Save
+                  </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.cancelButton} onPress={cancelEdit}>
-                  <Text style={styles.buttonText}>Cancel</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.cancelButton,
+                    {
+                      padding: s(6),
+                      borderRadius: s(6),
+                    },
+                  ]}
+                  onPress={cancelEdit}
+                >
+                  <Text
+                    style={[
+                      styles.buttonText,
+                      { fontSize: ms(13) },
+                    ]}
+                  >
+                    Cancel
+                  </Text>
                 </TouchableOpacity>
               </>
             ) : (
               <>
-                <TouchableOpacity style={styles.editButton} onPress={() => startEditTeacher(item)}>
-                  <Text style={styles.buttonText}>Edit</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.editButton,
+                    {
+                      padding: s(6),
+                      borderRadius: s(6),
+                    },
+                  ]}
+                  onPress={() => startEditTeacher(item)}
+                >
+                  <Text
+                    style={[
+                      styles.buttonText,
+                      { fontSize: ms(13) },
+                    ]}
+                  >
+                    Edit
+                  </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.deleteButton} onPress={() => deleteTeacher(item.id)}>
-                  <Text style={styles.buttonText}>Delete</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.deleteButton,
+                    {
+                      padding: s(6),
+                      borderRadius: s(6),
+                    },
+                  ]}
+                  onPress={() => deleteTeacher(item.id)}
+                >
+                  <Text
+                    style={[
+                      styles.buttonText,
+                      { fontSize: ms(13) },
+                    ]}
+                  >
+                    Delete
+                  </Text>
                 </TouchableOpacity>
               </>
             )}
@@ -265,95 +421,207 @@ export default function TeachersScreen({ user: initialUser }) {
   );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.titleRow}>
-        <Text style={styles.title}>Teachers</Text>
-        {isAdmin && (
-          <TouchableOpacity
-            style={styles.addButtonSmall}
-            onPress={() => setExpandedId(expandedId === "new" ? null : "new")}
+    <Layout>
+      <View
+        style={[
+          styles.container,
+          { padding: s(20) },
+        ]}
+      >
+        <View style={styles.titleRow}>
+          <Text
+            style={[
+              styles.title,
+              { fontSize: ms(28) },
+            ]}
           >
-            <Text style={styles.buttonText}>+</Text>
-          </TouchableOpacity>
+            Teachers
+          </Text>
+          {isAdmin && (
+            <TouchableOpacity
+              style={[
+                styles.addButtonSmall,
+                {
+                  paddingHorizontal: s(12),
+                  paddingVertical: s(6),
+                  borderRadius: s(6),
+                },
+              ]}
+              onPress={() =>
+                setExpandedId(expandedId === "new" ? null : "new")
+              }
+            >
+              <Text
+                style={[
+                  styles.buttonText,
+                  { fontSize: ms(18) },
+                ]}
+              >
+                +
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {expandedId === "new" && isAdmin && (
+          <View
+            style={[
+              styles.newForm,
+              {
+                padding: s(15),
+                borderRadius: s(12),
+              },
+            ]}
+          >
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(10),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Name"
+              value={newTeacherName}
+              onChangeText={setNewTeacherName}
+            />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(10),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Email"
+              value={newTeacherEmail}
+              onChangeText={setNewTeacherEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+            />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(10),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Phone"
+              value={newTeacherPhone}
+              onChangeText={setNewTeacherPhone}
+              keyboardType="phone-pad"
+            />
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  padding: s(10),
+                  borderRadius: s(8),
+                  fontSize: ms(16),
+                },
+              ]}
+              placeholder="Description"
+              value={newTeacherDescription}
+              onChangeText={setNewTeacherDescription}
+            />
+            <TouchableOpacity
+              style={[
+                styles.addButton,
+                {
+                  padding: s(12),
+                  borderRadius: s(8),
+                },
+              ]}
+              onPress={addTeacher}
+            >
+              <Text
+                style={[
+                  styles.addButtonText,
+                  { fontSize: ms(16) },
+                ]}
+              >
+                Add Teacher
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {loading ? (
+          <ActivityIndicator size="large" color="#28a745" />
+        ) : (
+          <FlatList
+            data={teachers}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.id}
+            ListEmptyComponent={listEmpty}
+            contentContainerStyle={{ paddingBottom: s(12) }}
+          />
         )}
       </View>
-
-      {/* Add new teacher form */}
-      {expandedId === "new" && isAdmin && (
-        <View style={styles.newForm}>
-          <TextInput
-            style={styles.input}
-            placeholder="Name"
-            value={newTeacherName}
-            onChangeText={setNewTeacherName}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            value={newTeacherEmail}
-            onChangeText={setNewTeacherEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Phone"
-            value={newTeacherPhone}
-            onChangeText={setNewTeacherPhone}
-            keyboardType="phone-pad"
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Description"
-            value={newTeacherDescription}
-            onChangeText={setNewTeacherDescription}
-          />
-          <TouchableOpacity style={styles.addButton} onPress={addTeacher}>
-            <Text style={styles.addButtonText}>Add Teacher</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {loading ? (
-        <ActivityIndicator size="large" color="#28a745" />
-      ) : (
-        <FlatList
-          data={teachers}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          ListEmptyComponent={listEmpty}
-        />
-      )}
-    </View>
+    </Layout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#f5f5f5" },
-  titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-  title: { fontSize: 28, fontWeight: "bold", color: "#28a745" },
+  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  titleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  title: { fontWeight: "bold", color: "#28a745" },
   item: {
     backgroundColor: "#fff",
-    padding: 15,
-    borderRadius: 12,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: "#ddd",
   },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  itemText: { fontSize: 16, fontWeight: "600" },
-  expandIcon: { fontSize: 20, fontWeight: "bold", color: "#28a745" },
-  details: { marginTop: 10 },
-  adminButtons: { flexDirection: "row", marginTop: 10, gap: 6 },
-  editButton: { backgroundColor: "#007bff", padding: 6, borderRadius: 6, marginRight: 6 },
-  saveButton: { backgroundColor: "#28a745", padding: 6, borderRadius: 6, marginRight: 6 },
-  cancelButton: { backgroundColor: "#6c757d", padding: 6, borderRadius: 6 },
-  deleteButton: { backgroundColor: "#dc3545", padding: 6, borderRadius: 6 },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  itemText: { fontWeight: "600" },
+  expandIcon: { fontWeight: "bold", color: "#28a745" },
+  details: {},
+  adminButtons: { flexDirection: "row", gap: 6 },
+  editButton: { backgroundColor: "#007bff" },
+  saveButton: { backgroundColor: "#28a745" },
+  cancelButton: { backgroundColor: "#6c757d" },
+  deleteButton: { backgroundColor: "#dc3545" },
   buttonText: { color: "#fff", fontWeight: "600", textAlign: "center" },
-  inputInline: { borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 6, fontSize: 16, flex: 1, marginRight: 10, marginTop: 8 },
-  input: { borderWidth: 1, borderColor: "#ccc", borderRadius: 8, padding: 10, marginBottom: 10, fontSize: 16 },
-  addButton: { backgroundColor: "#28a745", padding: 12, borderRadius: 8, alignItems: "center", marginBottom: 10 },
-  addButtonSmall: { backgroundColor: "#28a745", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 },
-  addButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  newForm: { backgroundColor: "#fff", padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: "#ddd" },
+  inputInline: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    flex: 1,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    marginBottom: 10,
+  },
+  addButton: {
+    backgroundColor: "#28a745",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  addButtonSmall: { backgroundColor: "#28a745" },
+  addButtonText: { color: "#fff", fontWeight: "600" },
+  newForm: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    marginBottom: 10,
+  },
+  noDataText: {
+    fontSize: 16,
+    color: "#888",
+    textAlign: "center",
+    marginTop: 20,
+  },
 });

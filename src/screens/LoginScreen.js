@@ -1,4 +1,4 @@
-// screens/LoginScreen.js
+// src/screens/LoginScreen.js
 import { signInWithEmailAndPassword } from "firebase/auth";
 import {
   doc,
@@ -16,12 +16,16 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Layout from "../components/Layout";
 import { auth, db } from "../services/firebaseConfig";
+import { useResponsive } from "../theme/responsive";
 
 export default function LoginScreen({ navigation, setUser }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const { s, ms, isLargeScreen } = useResponsive();
 
   const handleLogin = useCallback(async () => {
     const trimmedEmail = email.trim();
@@ -34,16 +38,17 @@ export default function LoginScreen({ navigation, setUser }) {
     try {
       setLoading(true);
 
-      // 1) Auth sign-in
-      const { user } = await signInWithEmailAndPassword(auth, trimmedEmail, password);
+      const { user } = await signInWithEmailAndPassword(
+        auth,
+        trimmedEmail,
+        password
+      );
       const uid = user.uid;
 
-      // 2) Ensure /users/{uid} exists (aligns with Firestore rules)
       const userRef = doc(db, "users", uid);
       const snap = await getDoc(userRef);
 
       if (!snap.exists()) {
-        // Δημιούργησε ελάχιστο user doc με role 'user'
         await setDoc(userRef, {
           email: user.email ?? trimmedEmail,
           role: "user",
@@ -51,24 +56,23 @@ export default function LoginScreen({ navigation, setUser }) {
         });
       }
 
-      // 3) Διαβάσε τον ρόλο (ξανά, σε περίπτωση που υπήρχε ήδη διαφορετικός)
       const updatedSnap = snap.exists() ? snap : await getDoc(userRef);
       const role =
         updatedSnap.exists() && typeof updatedSnap.data().role === "string"
           ? updatedSnap.data().role
           : "user";
 
-      // 4) Το App.js ήδη συγχρονίζει role με onSnapshot, αλλά
-      //    θέτουμε και άμεσα το state για αίσθηση “snappy” UI.
       setUser?.({
         uid,
         email: user.email ?? trimmedEmail,
         role,
       });
 
-      Alert.alert("Login Successful", `Welcome back, ${user.email ?? trimmedEmail}`);
+      Alert.alert(
+        "Login Successful",
+        `Welcome back, ${user.email ?? trimmedEmail}`
+      );
 
-      // 5) Καθάρισε φόρμα & πλοήγησε
       setEmail("");
       setPassword("");
 
@@ -77,9 +81,12 @@ export default function LoginScreen({ navigation, setUser }) {
     } catch (error) {
       console.error(error);
       let message = "An error occurred. Please try again.";
-      if (error.code === "auth/user-not-found") message = "No user found with this email.";
-      else if (error.code === "auth/wrong-password") message = "Incorrect password.";
-      else if (error.code === "auth/invalid-email") message = "Invalid email format.";
+      if (error.code === "auth/user-not-found")
+        message = "No user found with this email.";
+      else if (error.code === "auth/wrong-password")
+        message = "Incorrect password.";
+      else if (error.code === "auth/invalid-email")
+        message = "Invalid email format.";
       else if (error.code === "auth/too-many-requests")
         message = "Too many attempts. Please try again later.";
       Alert.alert("Login Failed", message);
@@ -89,59 +96,135 @@ export default function LoginScreen({ navigation, setUser }) {
   }, [email, password, navigation, setUser]);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Login</Text>
+    <Layout>
+      <View
+        style={[
+          styles.container,
+          {
+            padding: s(20),
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.card,
+            {
+              padding: s(20),
+              borderRadius: s(12),
+              maxWidth: isLargeScreen ? 420 : 380,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.title,
+              {
+                fontSize: ms(32),
+                marginBottom: s(24),
+              },
+            ]}
+          >
+            Login
+          </Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={!loading}
-      />
+          <TextInput
+            style={[
+              styles.input,
+              {
+                paddingVertical: s(12),
+                paddingHorizontal: s(15),
+                borderRadius: s(8),
+                marginBottom: s(15),
+                fontSize: ms(16),
+              },
+            ]}
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!loading}
+          />
 
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        editable={!loading}
-      />
+          <TextInput
+            style={[
+              styles.input,
+              {
+                paddingVertical: s(12),
+                paddingHorizontal: s(15),
+                borderRadius: s(8),
+                marginBottom: s(15),
+                fontSize: ms(16),
+              },
+            ]}
+            placeholder="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            editable={!loading}
+          />
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#007bff" style={{ marginVertical: 20 }} />
-      ) : (
-        <TouchableOpacity style={styles.button} onPress={handleLogin} activeOpacity={0.8}>
-          <Text style={styles.buttonText}>Log In</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+          {loading ? (
+            <ActivityIndicator
+              size="large"
+              color="#007bff"
+              style={{ marginVertical: s(20) }}
+            />
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.button,
+                {
+                  paddingVertical: s(14),
+                  borderRadius: s(8),
+                  marginTop: s(10),
+                },
+              ]}
+              onPress={handleLogin}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.buttonText,
+                  { fontSize: ms(18) },
+                ]}
+              >
+                Log In
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+    </Layout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, justifyContent: "center", backgroundColor: "#f5f5f5" },
-  title: { fontSize: 32, fontWeight: "bold", marginBottom: 40, textAlign: "center" },
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f5f5f5",
+  },
+  card: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    width: "100%",
+  },
+  title: {
+    fontWeight: "bold",
+    textAlign: "center",
+  },
   input: {
     backgroundColor: "#fff",
-    paddingVertical: 12,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    marginBottom: 15,
-    fontSize: 16,
     borderWidth: 1,
     borderColor: "#ddd",
   },
   button: {
     backgroundColor: "#007bff",
-    paddingVertical: 15,
-    borderRadius: 8,
     alignItems: "center",
-    marginTop: 10,
   },
-  buttonText: { color: "#fff", fontWeight: "600", fontSize: 18 },
+  buttonText: { color: "#fff", fontWeight: "600" },
 });

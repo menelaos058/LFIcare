@@ -1,4 +1,4 @@
-// screens/MyProgramsScreen.js
+// src/screens/MyProgramsScreen.js
 import {
   collection,
   onSnapshot,
@@ -15,20 +15,19 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Layout from "../components/Layout";
 import { auth, db } from "../services/firebaseConfig";
+import { useResponsive } from "../theme/responsive";
 
 export default function MyProgramsScreen({ user, navigation }) {
   const [loading, setLoading] = useState(true);
 
-  // Student data
   const [purchases, setPurchases] = useState([]);
-
-  // Teacher data
   const [teacherPrograms, setTeacherPrograms] = useState([]);
   const [expandedProgramId, setExpandedProgramId] = useState(null);
-
-  // Common: chats the current user participates in
   const [myChats, setMyChats] = useState([]);
+
+  const { s, ms, isTablet, isLargeScreen } = useResponsive();
 
   const me = useMemo(
     () => (auth.currentUser?.email || user?.email || "").toLowerCase(),
@@ -36,7 +35,7 @@ export default function MyProgramsScreen({ user, navigation }) {
   );
   const role = user?.role || "user";
 
-  // --- Subscribe to my chats (common) ---
+  // --- Subscribe to my chats ---
   useEffect(() => {
     if (!me) return;
     const qChats = query(collection(db, "chats"), where("users", "array-contains", me));
@@ -54,10 +53,10 @@ export default function MyProgramsScreen({ user, navigation }) {
     return () => unsub();
   }, [me]);
 
-  // --- Student: subscribe to purchases ---
+  // --- Student purchases ---
   useEffect(() => {
     if (!user?.uid) return;
-    if (role === "teacher") return; // δάσκαλος δεν έχει purchases view εδώ
+    if (role === "teacher") return;
     const purchasesRef = collection(db, "users", user.uid, "purchases");
     const unsub = onSnapshot(
       purchasesRef,
@@ -74,7 +73,7 @@ export default function MyProgramsScreen({ user, navigation }) {
     return () => unsub();
   }, [user?.uid, role]);
 
-  // --- Teacher: subscribe to programs he teaches ---
+  // --- Teacher programs ---
   useEffect(() => {
     if (role !== "teacher") return;
     if (!me) return;
@@ -94,7 +93,6 @@ export default function MyProgramsScreen({ user, navigation }) {
     return () => unsub();
   }, [role, me]);
 
-  // --- Helpers ---
   const chatsByProgramId = useMemo(() => {
     const map = new Map();
     for (const c of myChats) {
@@ -103,7 +101,7 @@ export default function MyProgramsScreen({ user, navigation }) {
       if (!map.has(pid)) map.set(pid, []);
       map.get(pid).push(c);
     }
-    return map; // Map(programId -> [chats])
+    return map;
   }, [myChats]);
 
   const openChat = useCallback(
@@ -116,22 +114,58 @@ export default function MyProgramsScreen({ user, navigation }) {
     [navigation]
   );
 
-  // -------------------------------
-  // Student view (purchases + open chat if exists)
-  // -------------------------------
+  // -------- Student view --------
   const renderPurchaseItem = ({ item }) => {
     const chatsForProgram = chatsByProgramId.get(item.programId) || [];
-    // για μαθητή, συνήθως υπάρχει 1 chat με τον teacher για κάθε πρόγραμμα
     const existingChat = chatsForProgram[0];
 
     return (
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>{item.programTitle}</Text>
-        {item.description ? <Text style={styles.cardDesc}>{item.description}</Text> : null}
-        <Text style={styles.meta}>👨‍🏫 {item.teacherEmail}</Text>
+      <View
+        style={[
+          styles.card,
+          {
+            padding: s(14),
+            borderRadius: s(14),
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.cardTitle,
+            { fontSize: ms(18), marginBottom: s(4) },
+          ]}
+        >
+          {item.programTitle}
+        </Text>
+        {item.description ? (
+          <Text
+            style={[
+              styles.cardDesc,
+              { fontSize: ms(14), marginBottom: s(4) },
+            ]}
+          >
+            {item.description}
+          </Text>
+        ) : null}
+        <Text
+          style={[
+            styles.meta,
+            { fontSize: ms(13), marginTop: s(2) },
+          ]}
+        >
+          👨‍🏫 {item.teacherEmail}
+        </Text>
 
         <TouchableOpacity
-          style={[styles.primaryBtn, !existingChat && styles.disabledBtn]}
+          style={[
+            styles.primaryBtn,
+            !existingChat && styles.disabledBtn,
+            {
+              paddingVertical: s(10),
+              borderRadius: s(10),
+              marginTop: s(10),
+            },
+          ]}
           onPress={() =>
             existingChat
               ? openChat(existingChat)
@@ -139,7 +173,12 @@ export default function MyProgramsScreen({ user, navigation }) {
           }
           disabled={!existingChat}
         >
-          <Text style={styles.btnText}>
+          <Text
+            style={[
+              styles.btnText,
+              { fontSize: ms(14) },
+            ]}
+          >
             {existingChat ? "💬 Open Chat" : "⏳ Waiting for chat…"}
           </Text>
         </TouchableOpacity>
@@ -147,48 +186,148 @@ export default function MyProgramsScreen({ user, navigation }) {
     );
   };
 
-  // -------------------------------
-  // Teacher view (programs he teaches -> expand -> list chats per program)
-  // -------------------------------
+  // -------- Teacher view --------
   const renderTeacherProgram = ({ item }) => {
     const isExpanded = expandedProgramId === item.id;
     const chatsForProgram = chatsByProgramId.get(item.id) || [];
 
     return (
-      <View style={styles.card}>
+      <View
+        style={[
+          styles.card,
+          {
+            padding: s(14),
+            borderRadius: s(14),
+          },
+        ]}
+      >
         <View style={styles.rowBetween}>
-          <Text style={styles.cardTitle}>{item.title || "Untitled Program"}</Text>
-          <TouchableOpacity onPress={() => setExpandedProgramId(isExpanded ? null : item.id)}>
-            <Text style={styles.expandIcon}>{isExpanded ? "−" : "+"}</Text>
+          <Text
+            style={[
+              styles.cardTitle,
+              { fontSize: ms(18) },
+            ]}
+          >
+            {item.title || "Untitled Program"}
+          </Text>
+          <TouchableOpacity
+            onPress={() =>
+              setExpandedProgramId(isExpanded ? null : item.id)
+            }
+          >
+            <Text
+              style={[
+                styles.expandIcon,
+                { fontSize: ms(22) },
+              ]}
+            >
+              {isExpanded ? "−" : "+"}
+            </Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.meta}>💶 {Number.isFinite(Number(item.price)) ? `${item.price}€` : "-"}</Text>
-        {item.description ? <Text style={styles.cardDesc}>{item.description}</Text> : null}
+        <Text
+          style={[
+            styles.meta,
+            { fontSize: ms(13), marginTop: s(4) },
+          ]}
+        >
+          💶{" "}
+          {Number.isFinite(Number(item.price)) ? `${item.price}€` : "-"}
+        </Text>
+        {item.description ? (
+          <Text
+            style={[
+              styles.cardDesc,
+              { fontSize: ms(14), marginTop: s(6) },
+            ]}
+          >
+            {item.description}
+          </Text>
+        ) : null}
 
         {isExpanded && (
-          <View style={styles.chatsBlock}>
-            <Text style={styles.blockTitle}>Chats ({chatsForProgram.length})</Text>
+          <View
+            style={[
+              styles.chatsBlock,
+              { marginTop: s(12) },
+            ]}
+          >
+            <Text
+              style={[
+                styles.blockTitle,
+                { fontSize: ms(16), marginBottom: s(8) },
+              ]}
+            >
+              Chats ({chatsForProgram.length})
+            </Text>
             {chatsForProgram.length ? (
               chatsForProgram.map((c) => {
-                // βρες τον "άλλον" συμμετέχοντα (μαθητή)
-                const other = (c.users || []).find((u) => u?.toLowerCase() !== me);
+                const other = (c.users || []).find(
+                  (u) => u?.toLowerCase() !== me
+                );
                 return (
-                  <View key={c.id} style={styles.chatRow}>
+                  <View
+                    key={c.id}
+                    style={[
+                      styles.chatRow,
+                      {
+                        paddingVertical: s(8),
+                      },
+                    ]}
+                  >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.chatTitle}>{c.programTitle || "Chat"}</Text>
-                      <Text style={styles.chatSub} numberOfLines={1}>
-                        👤 {other || "unknown"} · {c.lastMessage || "No messages yet"}
+                      <Text
+                        style={[
+                          styles.chatTitle,
+                          { fontSize: ms(15) },
+                        ]}
+                      >
+                        {c.programTitle || "Chat"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.chatSub,
+                          { fontSize: ms(13), marginTop: s(2) },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        👤 {other || "unknown"} ·{" "}
+                        {c.lastMessage || "No messages yet"}
                       </Text>
                     </View>
-                    <TouchableOpacity style={styles.secondaryBtn} onPress={() => openChat(c)}>
-                      <Text style={styles.btnText}>Open</Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.secondaryBtn,
+                        {
+                          paddingVertical: s(8),
+                          paddingHorizontal: s(12),
+                          borderRadius: s(8),
+                        },
+                      ]}
+                      onPress={() => openChat(c)}
+                    >
+                      <Text
+                        style={[
+                          styles.btnText,
+                          { fontSize: ms(14) },
+                        ]}
+                      >
+                        Open
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 );
               })
             ) : (
-              <Text style={styles.emptyText}>No chats for this program yet.</Text>
+              <Text
+                style={[
+                  styles.emptyText,
+                  { fontSize: ms(13), marginTop: s(6) },
+                ]}
+              >
+                No chats for this program yet.
+              </Text>
             )}
           </View>
         )}
@@ -198,99 +337,134 @@ export default function MyProgramsScreen({ user, navigation }) {
 
   if (!user) {
     return (
-      <View style={styles.center}>
-        <Text>Please log in to view this page.</Text>
-      </View>
+      <Layout>
+        <View
+          style={[
+            styles.center,
+            { padding: s(20) },
+          ]}
+        >
+          <Text style={{ fontSize: ms(14) }}>
+            Please log in to view this page.
+          </Text>
+        </View>
+      </Layout>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>
-        {role === "teacher" ? "My Programs (Teacher)" : "My Programs"}
-      </Text>
+    <Layout>
+      <View
+        style={[
+          styles.container,
+          {
+            padding: s(20),
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.title,
+            {
+              fontSize: ms(24),
+              marginBottom: s(16),
+            },
+          ]}
+        >
+          {role === "teacher" ? "My Programs (Teacher)" : "My Programs"}
+        </Text>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#28a745" />
-      ) : role === "teacher" ? (
-        teacherPrograms.length ? (
+        {loading ? (
+          <ActivityIndicator size="large" color="#28a745" />
+        ) : role === "teacher" ? (
+          teacherPrograms.length ? (
+            <FlatList
+              data={teacherPrograms}
+              keyExtractor={(i) => i.id}
+              renderItem={renderTeacherProgram}
+              contentContainerStyle={{ paddingBottom: s(12) }}
+            />
+          ) : (
+            <Text
+              style={[
+                styles.emptyText,
+                { fontSize: ms(14), marginTop: s(24) },
+              ]}
+            >
+              You don't teach any programs yet.
+            </Text>
+          )
+        ) : purchases.length ? (
           <FlatList
-            data={teacherPrograms}
+            data={purchases}
             keyExtractor={(i) => i.id}
-            renderItem={renderTeacherProgram}
+            renderItem={renderPurchaseItem}
+            contentContainerStyle={{ paddingBottom: s(12) }}
           />
         ) : (
-          <Text style={styles.emptyText}>You don't teach any programs yet.</Text>
-        )
-      ) : purchases.length ? (
-        <FlatList
-          data={purchases}
-          keyExtractor={(i) => i.id}
-          renderItem={renderPurchaseItem}
-        />
-      ) : (
-        <Text style={styles.emptyText}>No programs found.</Text>
-      )}
-    </View>
+          <Text
+            style={[
+              styles.emptyText,
+              { fontSize: ms(14), marginTop: s(24) },
+            ]}
+          >
+            No programs found.
+          </Text>
+        )}
+      </View>
+    </Layout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#f5f5f5" },
+  container: { flex: 1, backgroundColor: "#f5f5f5" },
   title: {
-    fontSize: 28,
     fontWeight: "bold",
     color: "#28a745",
-    marginBottom: 16,
     alignSelf: "center",
   },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
 
   card: {
     backgroundColor: "#fff",
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 12,
     borderWidth: 1,
     borderColor: "#ddd",
+    marginBottom: 12,
   },
-  rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  rowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
 
-  cardTitle: { fontSize: 18, fontWeight: "bold", color: "#333" },
-  cardDesc: { fontSize: 14, color: "#555", marginTop: 6 },
-  meta: { fontSize: 13, color: "#007bff", marginTop: 6 },
+  cardTitle: { color: "#333", fontWeight: "bold" },
+  cardDesc: { color: "#555" },
+  meta: { color: "#007bff" },
 
   primaryBtn: {
     backgroundColor: "#28a745",
-    padding: 10,
-    borderRadius: 10,
     alignItems: "center",
-    marginTop: 10,
   },
   secondaryBtn: {
     backgroundColor: "#28a745",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
     alignSelf: "center",
   },
   disabledBtn: { backgroundColor: "#a8d5b3" },
   btnText: { color: "#fff", fontWeight: "600" },
 
-  expandIcon: { fontSize: 22, fontWeight: "bold", color: "#28a745", marginLeft: 10 },
+  expandIcon: { fontWeight: "bold", color: "#28a745" },
 
-  chatsBlock: { marginTop: 12 },
-  blockTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8, color: "#333" },
+  chatsBlock: {},
+  blockTitle: { fontWeight: "600", color: "#333" },
 
   chatRow: {
     flexDirection: "row",
     gap: 10,
-    paddingVertical: 8,
     borderTopWidth: 1,
     borderColor: "#eee",
   },
-  chatTitle: { fontSize: 15, fontWeight: "600", color: "#333" },
-  chatSub: { fontSize: 13, color: "#666", marginTop: 2 },
+  chatTitle: { color: "#333", fontWeight: "600" },
+  chatSub: { color: "#666" },
 
-  emptyText: { color: "#888", textAlign: "center", marginTop: 24 },
+  emptyText: { color: "#888", textAlign: "center" },
 });
