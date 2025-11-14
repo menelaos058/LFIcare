@@ -1,9 +1,8 @@
-// app.config.js
 /** @type {import('@expo/cli').Config} */
 module.exports = {
   name: "LFIcare",
   slug: "LFIcare",
-  owner: "lamprian", 
+  owner: "lamprian",
   scheme: "lficare",
   version: "1.0.0",
   orientation: "portrait",
@@ -12,57 +11,49 @@ module.exports = {
   splash: {
     image: "./assets/images/splash.png",
     resizeMode: "contain",
-    backgroundColor: "#ffffff",
-  },
-  updates: {
-    url: "https://u.expo.dev/774fe32f-e4a4-4763-b48e-c6804bc8dff4",
-    checkAutomatically: "ON_LOAD",
-    fallbackToCacheTimeout: 0,
+    backgroundColor: "#ffffff"
   },
   assetBundlePatterns: ["**/*"],
   ios: {
     supportsTablet: true,
     bundleIdentifier: "com.men.lficare",
     infoPlist: {
-      NSPhotoLibraryUsageDescription: "We need access to your photos to share images in chat.",
-      NSCameraUsageDescription: "We need access to your camera to send photos.",
+      NSPhotoLibraryUsageDescription:
+        "We need access to your photos to share images in chat.",
+      NSCameraUsageDescription:
+        "We need access to your camera to send photos.",
       NSMicrophoneUsageDescription:
-        "We need access to your microphone to record videos with sound.",
-    },
+        "We need access to your microphone to record videos with sound."
+    }
   },
   android: {
     package: "com.men.lficare",
     versionCode: 1,
     adaptiveIcon: {
       foregroundImage: "./assets/images/adaptive-icon.png",
-      backgroundColor: "#ffffff",
+      backgroundColor: "#ffffff"
     },
     permissions: [
       "INTERNET",
-      // Android 13+ granular permissions
       "android.permission.READ_MEDIA_IMAGES",
       "android.permission.READ_MEDIA_VIDEO",
-      // backwards compatibility
-      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.READ_EXTERNAL_STORAGE"
     ],
-    // αν μιλάς με http dev server / emulator
     intentFilters: [
       {
         action: "VIEW",
         data: [{ scheme: "https", host: "lficare.app", pathPrefix: "/" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
+        category: ["BROWSABLE", "DEFAULT"]
+      }
+    ]
   },
   web: {
-    favicon: "./assets/images/favicon.png",
+    favicon: "./assets/images/favicon.png"
   },
   extra: {
-    eas: { projectId: "774fe32f-e4a4-4763-b48e-c6804bc8dff4" },
-
+    eas: { projectId: "774fe32f-e4a4-4763-b48e-c6804bc8dff4" }
   },
   plugins: [
-    
     "expo-file-system",
     "expo-image-picker",
     "expo-media-library",
@@ -76,10 +67,12 @@ module.exports = {
           compileSdkVersion: 35,
           targetSdkVersion: 35,
           minSdkVersion: 24,
-          kotlinVersion: "1.9.25",
+          kotlinVersion: "1.9.25"
         },
-        ios: {},
-      },
-    ],
-  ],
+        ios: {
+          
+        }
+      }
+    ]
+  ]
 };

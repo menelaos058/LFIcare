@@ -169,7 +169,7 @@ const Header = ({ user, setUser }) => {
   );
 };
 
-const HEADER_HEIGHT = 56;
+const HEADER_HEIGHT = 80;
 
 const styles = StyleSheet.create({
   safe: {

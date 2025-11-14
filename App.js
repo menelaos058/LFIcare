@@ -1,22 +1,16 @@
-// App.js
 import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, NativeModules, Platform, View } from "react-native";
+import {
+  ActivityIndicator,
+  NativeModules,
+  Platform,
+  View
+} from "react-native";
 import 'react-native-gesture-handler';
 import { auth, db } from "./src/services/firebaseConfig";
-if (Platform.OS === "android") {
-  const M = NativeModules?.ShareMenu;
-  // Παλαιότερες εκδόσεις δεν εκθέτουν αυτά τα methods -> RN βγάζει warnings
-  if (M && !M.addListener) {
-    M.addListener = () => {};
-  }
-  if (M && !M.removeListeners) {
-    M.removeListeners = () => {};
-  }
-}
 
 // Screens
 import AdminScreen from "./src/screens/AdminScreen";
@@ -34,24 +28,29 @@ import TeachersScreen from "./src/screens/TeachersScreen";
 // Components
 import Header from "./src/components/Header";
 
-const { ShareMenuModule } = NativeModules;
-if (Platform.OS === "android" && ShareMenuModule) {
-  if (!ShareMenuModule.addListener) ShareMenuModule.addListener = () => {};
-  if (!ShareMenuModule.removeListeners) ShareMenuModule.removeListeners = () => {};
-}
-const Stack = createNativeStackNavigator();
-
-// ❗ Lazy, safe import για ShareMenu
-let ShareMenu = null;
-if (Platform.OS === 'android' || Platform.OS === 'ios') {
-  try {
-    // ορισμένες εκδόσεις κάνουν default export, άλλες όχι
-    const mod = require('react-native-share-menu');
-    ShareMenu = mod?.default ?? mod;
-  } catch (e) {
-    // μένει null -> θα αγνοήσουμε τα share intents
+// --- NativeEventEmitter polyfill για παλιότερο ShareMenu native module ---
+if (Platform.OS === "android") {
+  const M = NativeModules?.ShareMenu || NativeModules?.ShareMenuModule;
+  if (M && !M.addListener) {
+    M.addListener = () => {};
+  }
+  if (M && !M.removeListeners) {
+    M.removeListeners = () => {};
   }
 }
+
+// ❗ Lazy & safe import για ShareMenu, μόνο σε native πλατφόρμες
+let ShareMenu = null;
+if (Platform.OS === "android" || Platform.OS === "ios") {
+  try {
+    const mod = require("react-native-share-menu");
+    ShareMenu = mod?.default ?? mod;
+  } catch (e) {
+    // μένει null -> απλά αγνοούμε share intents
+  }
+}
+
+const Stack = createNativeStackNavigator();
 
 export default function App() {
   const navRef = useNavigationContainerRef();
@@ -88,7 +87,7 @@ export default function App() {
           setCurrentUser({
             uid: user.uid,
             email: user.email ?? null,
-            role,
+            role
           });
           setLoading(false);
         },
@@ -97,7 +96,7 @@ export default function App() {
           setCurrentUser({
             uid: user.uid,
             email: user.email ?? null,
-            role: "user",
+            role: "user"
           });
           setLoading(false);
         }
@@ -112,10 +111,11 @@ export default function App() {
 
   // ====== Share intents (μόνο αν υπάρχει το native module) ======
   useEffect(() => {
-    // αν το module λείπει, δεν στήνουμε listeners
     if (!ShareMenu) return;
-    const hasInitial = typeof ShareMenu.getInitialShare === 'function';
-    const hasListener = typeof ShareMenu.addNewShareListener === 'function';
+
+    const hasInitial = typeof ShareMenu.getInitialShare === "function";
+    const hasListener = typeof ShareMenu.addNewShareListener === "function";
+
     if (!hasInitial && !hasListener) return;
 
     // 1) Share όταν άνοιξε η app
@@ -137,7 +137,9 @@ export default function App() {
           if (item) setPendingShare(item);
         });
         listenerCleanup = () => {
-          try { listener?.remove?.(); } catch {}
+          try {
+            listener?.remove?.();
+          } catch {}
         };
       } catch (e) {
         console.warn("ShareMenu.addNewShareListener failed:", e?.message);
@@ -155,7 +157,7 @@ export default function App() {
 
     if (!currentUser) {
       navRef.navigate("Login", {
-        redirect: { name: "ShareSheet", params: { shared: pendingShare } },
+        redirect: { name: "ShareSheet", params: { shared: pendingShare } }
       });
       setPendingShare(null);
       return;
@@ -167,7 +169,13 @@ export default function App() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center"
+        }}
+      >
         <ActivityIndicator size="large" />
       </View>
     );
