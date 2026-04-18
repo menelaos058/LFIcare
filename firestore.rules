@@ -54,10 +54,49 @@ service cloud.firestore {
         || request.resource.data[field] == resource.data[field];
     }
 
-    // serverTimestamp -> request.time
     function isNow(field) {
       return field in request.resource.data
         && request.resource.data[field] == request.time;
+    }
+
+    function chatDoc(chatId) {
+      return get(/databases/$(database)/documents/chats/$(chatId));
+    }
+
+    function chatExists(chatId) {
+      return exists(/databases/$(database)/documents/chats/$(chatId));
+    }
+
+    function isChatParticipant(chatId) {
+      return hasEmail()
+        && chatExists(chatId)
+        && (myEmail() in chatDoc(chatId).data.users);
+    }
+
+    function subscriptionDoc(uid, programId) {
+      return get(/databases/$(database)/documents/users/$(uid)/subscriptions/$(programId));
+    }
+
+    function subscriptionExists(uid, programId) {
+      return exists(/databases/$(database)/documents/users/$(uid)/subscriptions/$(programId));
+    }
+
+    function hasActiveProgramSubscription(uid, programId) {
+      return isSignedIn()
+        && subscriptionExists(uid, programId)
+        && subscriptionDoc(uid, programId).data.active != false
+        && (
+          !(subscriptionDoc(uid, programId).data.expiresAt is timestamp)
+          || subscriptionDoc(uid, programId).data.expiresAt > request.time
+        );
+    }
+
+    function canWriteToChat(chatId) {
+      return isChatParticipant(chatId)
+        && hasActiveProgramSubscription(
+          request.auth.uid,
+          chatDoc(chatId).data.programId
+        );
     }
 
     /* =============== USERS =============== */
@@ -105,12 +144,8 @@ service cloud.firestore {
       allow delete: if isOwner(userId) || isAdmin();
 
       /* =============== SUBSCRIPTIONS =============== */
-      // Single source of truth for purchased/active programs:
-      // /users/{uid}/subscriptions/{programId}
       match /subscriptions/{programId} {
         allow read: if isOwner(userId) || isAdmin();
-
-        // Writes only from backend / Cloud Functions (Admin SDK bypasses rules)
         allow write: if false;
       }
     }
@@ -187,7 +222,6 @@ service cloud.firestore {
     /* =============== CHATS =============== */
     match /chats/{chatId} {
 
-      // Create chat
       allow create: if hasEmail()
         && (request.resource.data.users is list)
         && request.resource.data.users.size() >= 2
@@ -212,11 +246,9 @@ service cloud.firestore {
         && isNow('createdAt')
         && exists(/databases/$(database)/documents/programs/$(request.resource.data.programId));
 
-      // Read/Delete only participants
       allow read, delete: if hasEmail()
         && (myEmail() in resource.data.users);
 
-      // Update only participants; immutable key fields
       allow update: if hasEmail()
         && (myEmail() in resource.data.users)
         && fieldUnchanged('users')
@@ -236,8 +268,7 @@ service cloud.firestore {
 
       /* ---- Messages subcollection ---- */
       match /messages/{messageId} {
-        allow create: if hasEmail()
-          && (myEmail() in get(/databases/$(database)/documents/chats/$(chatId)).data.users)
+        allow create: if canWriteToChat(chatId)
           && hasAllFields(request.resource.data, ['senderEmail', 'timestamp'])
           && onlyFields(request.resource.data, ['senderEmail', 'text', 'link', 'media', 'timestamp'])
           && request.resource.data.senderEmail == myEmail()
@@ -258,8 +289,7 @@ service cloud.firestore {
                  && validString(request.resource.data.media.mime, 1, 200))
           );
 
-        allow read: if hasEmail()
-          && (myEmail() in get(/databases/$(database)/documents/chats/$(chatId)).data.users);
+        allow read: if isChatParticipant(chatId);
 
         allow update: if false;
         allow delete: if false;
