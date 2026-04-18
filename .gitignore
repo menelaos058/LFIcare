@@ -1,0 +1,26 @@
+﻿node_modules/
+*.log
+.expo/
+.expo-shared/
+
+# Android/iOS native (δεν τα θέλουμε στο repo στο managed)
+android/
+ios/
+
+# Android extras
+android/.gradle/
+android/.idea/
+android/local.properties
+android/*.iml
+android/app/release/
+*.keystore
+*.jks
+
+# iOS extras
+*.xcworkspace
+*.xcuserstate
+*.xcodeproj/project.xcworkspace/
+DerivedData/
+
+# Env
+.env

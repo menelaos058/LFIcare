@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    function myEmail() { return request.auth.token.email; }
+
+    // Έλεγχος συμμετοχής στο chat μέσω Firestore
+    function isChatMember(chatId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/chats/$(chatId))
+        && (myEmail() in firestore.get(/databases/(default)/documents/chats/$(chatId)).data.users);
+    }
+
+    // chat-media/{chatId}/{uid}/{fileId}
+    match /chat-media/{chatId}/{uid}/{fileId} {
+      allow write: if isSignedIn()
+        && request.auth.uid == uid
+        && isChatMember(chatId)
+        // προαιρετικά: όριο μεγέθους 25MB
+        && request.resource.size < 25 * 1024 * 1024;
+
+      // Διαβάζουν μόνο μέλη του συγκεκριμένου chat
+      allow read: if isSignedIn() && isChatMember(chatId);
+    }
+
+    // default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

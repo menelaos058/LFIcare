@@ -1,0 +1,80 @@
+diff --git a/node_modules/react-native-share-menu/android/build.gradle b/node_modules/react-native-share-menu/android/build.gradle
+index 9557fdb..29d6770 100644
+--- a/node_modules/react-native-share-menu/android/build.gradle
++++ b/node_modules/react-native-share-menu/android/build.gradle
+@@ -1,24 +1,36 @@
+ apply plugin: 'com.android.library'
+ 
+ android {
+-    compileSdkVersion 29
+-    buildToolsVersion "29.0.2"
++    // Χρησιμοποιούμε τα SDK values του root project ή fallback σε σταθερές
++    compileSdkVersion rootProject.hasProperty('compileSdkVersion') ? rootProject.compileSdkVersion : 35
++    buildToolsVersion rootProject.hasProperty('buildToolsVersion') ? rootProject.buildToolsVersion : "34.0.0"
+ 
+     defaultConfig {
+-        minSdkVersion 16
+-        targetSdkVersion 29
++        minSdkVersion rootProject.hasProperty('minSdkVersion') ? rootProject.minSdkVersion : 24
++        targetSdkVersion rootProject.hasProperty('targetSdkVersion') ? rootProject.targetSdkVersion : 35
+         versionCode 1
+         versionName "1.0"
++
+         ndk {
+-            abiFilters "armeabi-v7a", "x86"
++            abiFilters "armeabi-v7a", "arm64-v8a", "x86", "x86_64"
+         }
+     }
++
++    // Java / Kotlin 17 συμβατότητα
++    compileOptions {
++        sourceCompatibility JavaVersion.VERSION_17
++        targetCompatibility JavaVersion.VERSION_17
++    }
++
+     lintOptions {
+-       warning 'InvalidPackage'
++        warning 'InvalidPackage'
+     }
++
++    // Αν χρειάζεται, μπορείς να επιβάλεις namespace (από AGP 8.0 και μετά)
++    namespace "com.meedan.sharemenu"
+ }
+ 
+ dependencies {
+-    //noinspection GradleDynamicVersion
++    // React Native bridge
+     implementation 'com.facebook.react:react-native:+'
+ }
+diff --git a/node_modules/react-native-share-menu/android/src/main/AndroidManifest.xml b/node_modules/react-native-share-menu/android/src/main/AndroidManifest.xml
+index 9c668c4..068070f 100644
+--- a/node_modules/react-native-share-menu/android/src/main/AndroidManifest.xml
++++ b/node_modules/react-native-share-menu/android/src/main/AndroidManifest.xml
+@@ -1,4 +1,4 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+-          package="com.meedan">
++          >
+ 
+ </manifest>
+diff --git a/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuModule.java b/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuModule.java
+index 09abd7b..7b0367d 100644
+--- a/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuModule.java
++++ b/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuModule.java
+@@ -1,5 +1,4 @@
+-package com.meedan;
+-
++package com.meedan.sharemenu;
+ import com.facebook.react.bridge.ActivityEventListener;
+ import com.facebook.react.bridge.Arguments;
+ import com.facebook.react.bridge.ReactApplicationContext;
+diff --git a/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuPackage.java b/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuPackage.java
+index 3884e25..7a51fc6 100644
+--- a/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuPackage.java
++++ b/node_modules/react-native-share-menu/android/src/main/java/com/meedan/ShareMenuPackage.java
+@@ -1,5 +1,4 @@
+-package com.meedan;
+-
++package com.meedan.sharemenu;
+ import androidx.annotation.NonNull;
+ 
+ import java.util.List;
